@@ -1,0 +1,18 @@
+# LangGraph skeleton configuration for OneRing
+agents:
+  strategy:
+    model: "grok-4"
+    timeout_seconds: 30
+  research:
+    model: "web-retrieval-v1"
+    timeout_seconds: 20
+  writer:
+    model: "grok-3-turbo"
+    timeout_seconds: 30
+  posting:
+    model: "none"  # posting uses API clients
+    timeout_seconds: 10
+
+workflow:
+  default_retry: 2
+  rollback_on_failure: true
