@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
+import Link from "next/link";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -18,7 +19,18 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={inter.className}>{children}</body>
+        <body className={inter.className}>
+          <header className="p-4 bg-black/50 text-white">
+            <nav className="max-w-6xl mx-auto flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <Link href="/" className="font-bold">OneRing</Link>
+                <Link href="/analytics" className="opacity-80">Analytics</Link>
+                <Link href="/organizations" className="opacity-80">Organizations</Link>
+              </div>
+            </nav>
+          </header>
+          {children}
+        </body>
       </html>
     </ClerkProvider>
   );
