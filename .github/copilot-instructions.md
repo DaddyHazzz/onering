@@ -9,6 +9,40 @@ Quick overview
 - Monorepo-style project with a Next.js 16 (app router) frontend in `src/app` and a small FastAPI backend skeleton in `backend/`.
 - Frontend uses TypeScript, Tailwind (via `postcss.config.mjs` + `src/app/globals.css`), and Clerk for auth (`@clerk/nextjs`).
 
+Current state (detailed)
+- Next.js app-router sources live in `src/app`. Many server routes are implemented under `src/app/api/*/route.ts` and are currently used both for production logic and as dev proxies to the FastAPI backend.
+- Key implemented server routes: `generate`, `post-to-x`, `post-to-ig` (mock), `stripe/checkout`, `stripe/webhook`, `mine-ring`, `referral/*`, `promo/claim`, `viewership`, `market/lease`, `schedule-post`.
+- Clerk is installed and configured in `src/app/layout.tsx`. A proxy-based middleware file `src/proxy.ts` replaces older `middleware.ts` to handle route protection for `/dashboard` and `/api/*`. Make sure `src/middleware.ts` is not present — it conflicts with Next 16 conventions.
+- Stripe webhook verification is implemented and expects the raw request body via `req.arrayBuffer()`; the webhook route also contains a defensive guard for `clerkClient` possibly being a callable factory.
+- Persistence is currently prototyped using Clerk `publicMetadata` and some in-memory Maps; this is intentionally temporary.
+
+Developer tips & immediate actions
+- Before making auth or webhook changes, read `.ai/context.md` — it contains the canonical current-state and required environment variables.
+- To test Stripe webhooks locally: run `stripe listen --forward-to localhost:3000/api/stripe/webhook` (or forward your ngrok domain) and set `STRIPE_WEBHOOK_SECRET` to the provided secret.
+- If dev `pnpm dev` ends up on port 3001 because 3000 is in use, either kill the process occupying 3000 or re-run `stripe listen`/ngrok to forward to the actual port.
+
+Files to inspect first (highest signal)
+- `src/app/api/generate/route.ts` — generation flow and proxying to backend.
+- `src/app/api/stripe/checkout/route.ts` and `src/app/api/stripe/webhook/route.ts` — payment session + webhook verification.
+- `src/app/api/post-to-x/route.ts` — X integration and rate-limiting pattern to follow.
+- `src/proxy.ts` — route protection pattern (Clerk middleware integration). If you modify route protection, test sign-in and webhook access.
+
+How to run local end-to-end verification for payments
+1. Start the Next dev server on the port you will expose (recommended: 3000):
+	- `pnpm install`
+	- `pnpm dev`
+2. Expose webhooks: run either
+	- `stripe listen --forward-to localhost:3000/api/stripe/webhook` (Stripe CLI), or
+	- `ngrok http 3000` (ngrok) and update Stripe webhook config.
+3. Fill `.env.local` with required vars (see `.ai/context.md`) and checkout the dashboard. Create a test Checkout session and complete payment using card `4242 4242 4242 4242`.
+4. Check server logs and Stripe CLI output for the `checkout.session.completed` event and confirm Clerk publicMetadata shows `verified:true` and `ring` incremented.
+
+Notes for AI agents
+- Preserve current service choices (Clerk, Stripe, Postgres/Timescale + pgvector) unless a human maintainer explicitly approves a change.
+- When asked to touch `/api/*` files, follow existing patterns: `zod` validation, use `NextRequest` semantics or standard `Request` in app routes, and return `Response.json(...)` or `new Response(...)` with explicit `content-type` headers.
+- Avoid touching client-only hooks from server components. Client components must start with `"use client"`.
+
+
 Key workflows (local)
 - Install deps: prefer `pnpm install` (repo contains `pnpm-lock.yaml`); `npm install` also works.
 - Start frontend dev server: `pnpm dev` (runs `next dev`).
