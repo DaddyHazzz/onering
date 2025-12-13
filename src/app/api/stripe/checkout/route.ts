@@ -20,9 +20,11 @@ export async function GET(req: Request) {
       return Response.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    // Build origin-aware URLs
-    const url = new URL(req.url);
-    const origin = url.origin;
+    // Build origin-aware URLs. Prefer forwarded headers (ngrok), fall back to host.
+    const proto = (req.headers.get('x-forwarded-proto') || req.headers.get('x-forwarded-protocol') || req.headers.get('forwarded-proto') || 'http');
+    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'localhost:3000';
+    const origin = `${proto}://${host}`;
+    console.log('[stripe/checkout] derived origin from headers:', { proto, host, origin });
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",

@@ -100,7 +100,7 @@ export default function Dashboard() {
                   window.location.href = sessionUrl;
                 } catch (err: any) {
                   console.error("checkout click error:", err);
-                  alert(err?.message || String(err));
+                  alert(err?.message || `${err}`);
                 }
               }}
               className="px-20 py-10 bg-gradient-to-r from-yellow-400 to-yellow-600 hover:from-yellow-500 hover:to-yellow-700 rounded-3xl text-5xl font-black text-black shadow-2xl transform hover:scale-110 transition duration-300"

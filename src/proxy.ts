@@ -10,7 +10,8 @@ const PUBLIC_PATHS = [
   "/",
   "/sign-in",
   "/sign-up",
-  "/sign-in/sso-callback",
+    "/sign-in/sso-callback",
+    "/api/stripe/webhook",
   "/_next",
   "/favicon.ico",
 ];

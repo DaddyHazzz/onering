@@ -30,7 +30,7 @@ export default function Home() {
             <button onClick={() => alert(`Thanks — mock saved ${email}`)} className="px-4 py-3 bg-purple-600 rounded">Join</button>
           </div>
         </div>
-        
+
         <div className="mt-8 p-6 bg-white/5 rounded">
           <h2 className="text-2xl font-bold mb-2">The OneRing — coming 2026</h2>
           <p className="opacity-80 mb-4">Records life. Posts hands-free. Earns RING while you sleep.</p>
