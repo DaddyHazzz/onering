@@ -35,7 +35,7 @@ if (-not $SkipDocker) {
 
 # Services
 Write-Host "Starting Backend..." -ForegroundColor Cyan
-Start-Process python -ArgumentList "$Root\backend\run_with_error_handling.py" -WorkingDirectory "$Root\backend" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$Root\backend'; python run_with_error_handling.py" -WindowStyle Normal
 Start-Sleep 4
 Write-Host " Backend started" -ForegroundColor Green
 Write-Host ""
