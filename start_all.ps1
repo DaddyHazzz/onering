@@ -35,7 +35,7 @@ if (-not $SkipDocker) {
 
 # Services
 Write-Host "Starting Backend..." -ForegroundColor Cyan
-Start-Process python -ArgumentList "-m", "uvicorn", "backend.main:app", "--port", "8000" -WorkingDirectory $Root -WindowStyle Normal
+Start-Process python -ArgumentList "$Root\backend\run_with_error_handling.py" -WorkingDirectory "$Root\backend" -WindowStyle Normal
 Start-Sleep 4
 Write-Host " Backend started" -ForegroundColor Green
 Write-Host ""
