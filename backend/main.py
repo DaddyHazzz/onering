@@ -1,25 +1,41 @@
+import logging
+import os
+import sys
+from datetime import datetime, timedelta
+from typing import Optional
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import logging
-import os
 from pydantic import BaseModel
-from typing import Optional
-import groq
-from redis import Redis
-from rq import Queue
-from datetime import datetime, timedelta
-import asyncio
-
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
+# Load env from backend/.env
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(dotenv_path=os.path.join(backend_dir, '.env'))
 
-from core.config import settings
-from core.logging import configure_logging
-from backend.api import auth, posts
-from backend.workers.post_worker import schedule_post
-from backend.agents.viral_thread import generate_viral_thread
+# Add backend to path for imports
+sys.path.insert(0, backend_dir)
+parent_dir = os.path.dirname(backend_dir)
+sys.path.insert(0, parent_dir)
+
+# Import after dotenv is loaded
+try:
+    from backend.core.config import settings
+    from backend.core.logging import configure_logging
+    from backend.api import auth, posts
+    from backend.agents.viral_thread import generate_viral_thread
+    import groq
+    from redis import Redis
+    from rq import Queue
+except ImportError as e:
+    print(f"[FATAL] Import error: {e}")
+    print(f"[FATAL] backend_dir: {backend_dir}")
+    print(f"[FATAL] parent_dir: {parent_dir}")
+    print(f"[FATAL] sys.path: {sys.path}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
 configure_logging()
 

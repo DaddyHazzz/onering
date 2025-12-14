@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
 """
-Simple wrapper to run the backend and show errors.
+Backend startup wrapper - properly handles process lifecycle
 """
-
 import sys
 import os
+import signal
 
 # Add workspace to path
 workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, workspace_root)
 
+# Prevent exit on reload
+os.environ['WERKZEUG_RUN_MAIN'] = 'true'
+
+print("[Backend] Starting OneRing Backend")
+print("[Backend] Server: http://localhost:8000")
+print("[Backend] Press CTRL+C to stop")
+print()
+
 if __name__ == "__main__":
     try:
         import uvicorn
-        print("[Backend] Starting on http://localhost:8000")
-        print("[Backend] Press CTRL+C to stop")
-        print()
-        
-        # Run without reload to avoid multiprocessing issues on Windows
+        # Use the app from backend.main
         uvicorn.run(
-            "main:app",
+            "backend.main:app",
             host="0.0.0.0",
             port=8000,
-            reload=False,  # Disable reload to avoid Windows multiprocessing issues
-            log_level="info"
+            reload=False,
+            log_level="info",
+            access_log=True
         )
     except KeyboardInterrupt:
-        print("[Backend] Shutting down...")
+        print("\n[Backend] Shutting down...")
         sys.exit(0)
     except Exception as e:
         print(f"[ERROR] {type(e).__name__}: {e}")
