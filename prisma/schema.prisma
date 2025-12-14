@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                    String      @id @default(uuid())
+  clerkId               String      @unique
+  ringBalance           Int         @default(0)
+  verified              Boolean     @default(false)
+  postHistory           Post[]
+  familyMembers         FamilyMember[]
+  marketplaceListings   MarketplaceListing[]
+  stakingPositions      StakingPosition[]
+  pastThreads           Unsupported("vector(1536)")[]
+  profileEmbedding      Unsupported("vector(1536)")?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+  lastLoginAt           DateTime?
+
+  @@map("users")
+}
+
+model FamilyMember {
+  id                    String      @id @default(uuid())
+  userId                String
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clerkId               String      @unique
+  name                  String
+  ringBalance           Int         @default(0)
+  verified              Boolean     @default(false)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@map("family_members")
+}
+
+model Post {
+  id                    String      @id @default(uuid())
+  userId                String
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform              String      // 'X', 'Instagram', 'TikTok', etc.
+  content               String
+  externalId            String?     // Twitter/Instagram post ID
+  ringEarned            Int         @default(0)
+  status                String      @default("published") // 'scheduled', 'published', 'failed'
+  scheduledFor          DateTime?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("posts")
+}
+
+model MarketplaceListing {
+  id                    String      @id @default(uuid())
+  userId                String
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                 String
+  description           String
+  priceRING             Int         // Price in RING
+  status                String      @default("active") // 'active', 'sold', 'cancelled'
+  category              String      @default("other") // 'template', 'service', 'tool', 'other'
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@map("marketplace_listings")
+}
+
+model StakingPosition {
+  id                    String      @id @default(uuid())
+  userId                String
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount                Int         // RING amount staked
+  apr                   Float       @default(5.0) // Annual percentage rate (%)
+  durationDays          Int         // Locking period in days
+  startDate             DateTime    @default(now())
+  claimedYield          Int         @default(0) // Total yield claimed
+  status                String      @default("active") // 'active', 'matured', 'withdrawn'
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("staking_positions")
+}

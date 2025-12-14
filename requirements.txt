@@ -1,7 +1,0 @@
-fastapi
-uvicorn[standard]
-redis
-rq
-python-dotenv
-pydantic
-passlib[bcrypt]

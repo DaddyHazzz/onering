@@ -3,32 +3,71 @@ import { NextRequest } from "next/server";
 import { TwitterApi } from "twitter-api-v2";
 import { z } from "zod";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
+import Redis from "ioredis";
+import { prisma } from "@/lib/db";
+import { embedThread } from "@/lib/embeddings";
 
 const schema = z.object({
   content: z.string().min(1),
 });
 
-// Simple in-memory rate limiter (per-process; replace with Redis in prod)
-const rateMap = new Map<string, { count: number; windowStart: number }>();
-const WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_POSTS_PER_WINDOW = 5;
+// Redis client for rate limiting
+const redis = new Redis({
+  host: process.env.REDIS_HOST || "localhost",
+  port: parseInt(process.env.REDIS_PORT || "6379"),
+  db: 0,
+  retryStrategy: (times) => {
+    const delay = Math.min(times * 50, 2000);
+    return delay;
+  },
+});
 
-function checkRateLimit(userId: string) {
+redis.on("error", (err) => {
+  console.error("[post-to-x] Redis error:", err);
+});
+
+// Rate limiting constants: max 5 posts per hour per user
+const RATE_LIMIT_WINDOW_SECONDS = 3600; // 1 hour
+const RATE_LIMIT_MAX_POSTS = 5;
+
+async function checkRateLimit(userId: string): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
+  const key = `rate:post:x:${userId}`;
   const now = Date.now();
-  const entry = rateMap.get(userId);
-  if (!entry) {
-    rateMap.set(userId, { count: 1, windowStart: now });
-    return true;
-  }
+  const windowStart = now - RATE_LIMIT_WINDOW_SECONDS * 1000;
 
-  if (now - entry.windowStart > WINDOW_MS) {
-    rateMap.set(userId, { count: 1, windowStart: now });
-    return true;
-  }
+  try {
+    // Use Redis ZSET for sliding window: score = timestamp, member = request ID
+    // Remove expired entries
+    await redis.zremrangebyscore(key, 0, windowStart);
 
-  if (entry.count >= MAX_POSTS_PER_WINDOW) return false;
-  entry.count += 1;
-  return true;
+    // Count current requests in window
+    const count = await redis.zcard(key);
+
+    if (count >= RATE_LIMIT_MAX_POSTS) {
+      // Get oldest entry's timestamp to calculate retry_after
+      const oldest = await redis.zrange(key, 0, 0, "WITHSCORES");
+      const retryAfter = oldest.length > 1
+        ? Math.ceil((parseInt(oldest[1]) + RATE_LIMIT_WINDOW_SECONDS * 1000 - now) / 1000)
+        : RATE_LIMIT_WINDOW_SECONDS;
+
+      console.warn(`[post-to-x] rate limit exceeded for ${userId}: ${count}/${RATE_LIMIT_MAX_POSTS}`);
+      return { allowed: false, remaining: 0, retryAfter };
+    }
+
+    // Add current request to the window
+    const requestId = `${now}-${Math.random().toString(36).substring(7)}`;
+    await redis.zadd(key, now, requestId);
+    // Set expiration on the key
+    await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS);
+
+    const remaining = RATE_LIMIT_MAX_POSTS - count - 1;
+    console.log(`[post-to-x] rate limit check passed for ${userId}: ${count + 1}/${RATE_LIMIT_MAX_POSTS}`);
+    return { allowed: true, remaining, retryAfter: 0 };
+  } catch (redisErr: any) {
+    console.error("[post-to-x] Redis rate limit check error:", redisErr);
+    // Fall through on Redis error (allow request)
+    return { allowed: true, remaining: -1, retryAfter: 0 };
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -41,20 +80,68 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    if (!checkRateLimit(userId)) {
-      console.warn("[post-to-x] rate limit exceeded for", userId);
-      return Response.json({ error: "Rate limit exceeded" }, { status: 429 });
+    const rateLimitCheck = await checkRateLimit(userId);
+    if (!rateLimitCheck.allowed) {
+      return Response.json(
+        { error: "Rate limit exceeded. Maximum 5 posts per hour." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": rateLimitCheck.retryAfter.toString(),
+          },
+        }
+      );
     }
 
     const body = await req.json();
     const { content } = schema.parse(body);
 
+    // Verify credentials exist
+    if (!process.env.TWITTER_API_KEY || !process.env.TWITTER_API_SECRET || !process.env.TWITTER_ACCESS_TOKEN || !process.env.TWITTER_ACCESS_TOKEN_SECRET) {
+      console.error("[post-to-x] missing Twitter credentials in environment");
+      return Response.json({ 
+        error: "Twitter credentials not configured. Add TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET to .env.local" 
+      }, { status: 500 });
+    }
+
     const client = new TwitterApi({
-      appKey: process.env.TWITTER_API_KEY!,
-      appSecret: process.env.TWITTER_API_SECRET!,
-      accessToken: process.env.TWITTER_ACCESS_TOKEN!,
-      accessSecret: process.env.TWITTER_ACCESS_TOKEN_SECRET!,
+      appKey: process.env.TWITTER_API_KEY,
+      appSecret: process.env.TWITTER_API_SECRET,
+      accessToken: process.env.TWITTER_ACCESS_TOKEN,
+      accessSecret: process.env.TWITTER_ACCESS_TOKEN_SECRET,
     });
+
+    // Validate credentials by testing a read-only API call
+    try {
+      console.log("[post-to-x] validating Twitter credentials...");
+      await client.v2.me();
+      console.log("[post-to-x] credentials validated ✓");
+    } catch (authErr: any) {
+      console.error("[post-to-x] credential validation failed:", {
+        status: authErr.status,
+        code: authErr.code,
+        message: authErr.message,
+        detail: authErr.data?.detail || authErr.data?.error
+      });
+      
+      const errorDetail = authErr.data?.detail || authErr.data?.error || authErr.message;
+      if (authErr.status === 403) {
+        return Response.json({
+          error: "Twitter API 403: Not Permitted. Your app may lack 'Read+Write' permissions or tokens are invalid.",
+          detail: errorDetail,
+          suggestedFix: "1. Check Twitter Developer Portal for app permissions (needs Read+Write+DM)\n2. Regenerate API keys if expired\n3. Update .env.local with fresh credentials\n4. Ensure app is linked to your account",
+          status: 403
+        }, { status: 403 });
+      } else if (authErr.status === 401) {
+        return Response.json({
+          error: "Twitter API 401: Unauthorized. Your credentials are invalid or expired.",
+          detail: errorDetail,
+          suggestedFix: "Regenerate API keys from Twitter Developer Portal and update .env.local",
+          status: 401
+        }, { status: 401 });
+      }
+      throw authErr;
+    }
 
     const lines = content
       .split("\n")
@@ -62,44 +149,133 @@ export async function POST(req: NextRequest) {
       .filter((l) => l.length > 0);
 
     let previousTweetId: string | null = null;
+    const postedTweets: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
-      const text =
-        lines.length === 1 ? lines[i] : `${i + 1}/${lines.length} ${lines[i]}`;
+      // Don't add numbering - tweets should be posted as-is
+      // If they need numbering, the content generation should handle it
+      const text = lines[i];
 
-      const tweet = await client.v2.tweet(text, {
-        ...(previousTweetId && { reply: { in_reply_to_tweet_id: previousTweetId } }),
-      });
+      try {
+        console.log(`[post-to-x] posting tweet ${i + 1}/${lines.length}...`);
+        const tweet = await client.v2.tweet(text, {
+          ...(previousTweetId && { reply: { in_reply_to_tweet_id: previousTweetId } }),
+        });
 
-      previousTweetId = tweet.data.id;
+        previousTweetId = tweet.data.id;
+        postedTweets.push(tweet.data.id);
+        console.log(`[post-to-x] tweet ${i + 1} posted: ${tweet.data.id}`);
+      } catch (tweetErr: any) {
+        console.error(`[post-to-x] failed to post tweet ${i + 1}:`, {
+          text: text.slice(0, 100),
+          status: tweetErr.status,
+          message: tweetErr.message,
+          code: tweetErr.code,
+          twitterDetail: tweetErr.data?.detail || tweetErr.data?.error,
+          fullData: tweetErr.data
+        });
+        
+        // If it's a 403, provide detailed help
+        if (tweetErr.status === 403) {
+          return Response.json({
+            error: `Tweet ${i + 1} failed with 403 Forbidden: You are not permitted to perform this action.`,
+            detail: tweetErr.data?.detail || "Likely due to insufficient permissions or write-only token restriction",
+            suggestedFix: "Check Twitter app permissions require 'Read + Write'. Regenerate tokens in Developer Portal.",
+            failedTweetIndex: i + 1,
+            failedTweetText: text.slice(0, 200)
+          }, { status: 403 });
+        }
+        
+        throw new Error(`Tweet ${i + 1} failed: ${tweetErr.message || tweetErr.code} (HTTP ${tweetErr.status})`);
+      }
     }
 
     const url = `https://x.com/${process.env.TWITTER_USERNAME || "i"}/status/${previousTweetId}`;
     console.log("[post-to-x] posted, url:", url, "by user:", userId);
-    // Persist post to Clerk publicMetadata (mock storage)
+
+    // Write to database and update Clerk metadata
     try {
-      const user = await clerkClient.users.getUser(userId);
-      const meta = (user.publicMetadata || {}) as any;
-      const posts = Array.isArray(meta.posts) ? meta.posts : [];
-      const postObj = {
-        id: previousTweetId,
-        platform: 'X',
-        content: content.slice(0, 280),
-        time: new Date().toISOString(),
-        views: Math.floor(Math.random() * 1000),
-        likes: Math.floor(Math.random() * 200),
-        ringEarned: 50,
-      };
-      posts.unshift(postObj);
-      const ring = Number(meta.ring || 0) + 50;
-      const newMeta = { ...meta, posts, ring };
-      await clerkClient.users.updateUser(userId, { publicMetadata: newMeta });
-      console.log('[post-to-x] updated user metadata with post and ring for', userId, newMeta);
-    } catch (uErr: any) {
-      console.error('[post-to-x] failed to update user metadata', uErr);
+      // Ensure user exists in Postgres
+      let dbUser = await prisma.user.findUnique({
+        where: { clerkId: userId },
+      });
+
+      if (!dbUser) {
+        // Create user if doesn't exist
+        dbUser = await prisma.user.create({
+          data: {
+            clerkId: userId,
+            ringBalance: 50,
+          },
+        });
+        console.log("[post-to-x] created new user in DB:", dbUser.id);
+      } else {
+        // Increment ring balance
+        dbUser = await prisma.user.update({
+          where: { id: dbUser.id },
+          data: {
+            ringBalance: { increment: 50 },
+          },
+        });
+      }
+
+      // Create post record in database
+      await prisma.post.create({
+        data: {
+          userId: dbUser.id,
+          platform: "X",
+          content: content.slice(0, 280),
+          externalId: previousTweetId,
+          ringEarned: 50,
+          status: "published",
+        },
+      });
+
+      // Embed thread content for pgvector storage
+      try {
+        const threadEmbedding = await embedThread(content);
+        console.log("[post-to-x] embedded thread (1536 dims) for pgvector storage");
+
+        // In production, store embedding in User.pastThreads vector column
+        // await prisma.user.update({
+        //   where: { id: dbUser.id },
+        //   data: {
+        //     pastThreads: { push: threadEmbedding }
+        //   }
+        // });
+      } catch (embedErr: any) {
+        console.warn("[post-to-x] thread embedding skipped:", embedErr.message);
+      }
+
+      console.log("[post-to-x] recorded post in DB for user:", dbUser.id, { ringBalance: dbUser.ringBalance });
+
+      // Also sync to Clerk metadata for fallback
+      try {
+        const clerk = await clerkClient();
+        const user = await clerk.users.getUser(userId);
+        const meta = (user.publicMetadata || {}) as any;
+        const posts = Array.isArray(meta.posts) ? meta.posts : [];
+        const postObj = {
+          id: previousTweetId,
+          platform: "X",
+          content: content.slice(0, 280),
+          time: new Date().toISOString(),
+          views: Math.floor(Math.random() * 1000),
+          likes: Math.floor(Math.random() * 200),
+          ringEarned: 50,
+        };
+        posts.unshift(postObj);
+        const newMeta = { ...meta, posts, ring: dbUser.ringBalance };
+        await clerk.users.updateUser(userId, { publicMetadata: newMeta });
+        console.log("[post-to-x] synced Clerk metadata for", userId);
+      } catch (clerkErr: any) {
+        console.warn("[post-to-x] failed to sync Clerk metadata:", clerkErr.message);
+      }
+    } catch (dbErr: any) {
+      console.error("[post-to-x] failed to write to database:", dbErr);
     }
 
-    return Response.json({ success: true, url });
+    return Response.json({ success: true, url, remaining: rateLimitCheck.remaining });
   } catch (error: any) {
     console.error("[post-to-x] X post failed:", error);
     return Response.json({ error: error.message || "Failed to post to X" }, { status: 500 });

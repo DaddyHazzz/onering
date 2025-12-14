@@ -13,6 +13,13 @@ interface UserPublicMetadata {
   verified?: boolean;
 }
 
+interface FamilyMember {
+  id: string;
+  name: string;
+  ringBalance: number;
+  verified: boolean;
+}
+
 export default function Dashboard() {
   const { user } = useUser();
   const [prompt, setPrompt] = useState("");
@@ -23,13 +30,54 @@ export default function Dashboard() {
   const [refCode, setRefCode] = useState<string | null>(null);
   const [claimInput, setClaimInput] = useState('');
   const [promoInput, setPromoInput] = useState('');
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [combinedRingBalance, setCombinedRingBalance] = useState<number>(0);
+  const [newMemberName, setNewMemberName] = useState("");
+  const [loadingFamily, setLoadingFamily] = useState(false);
+  const [topicForThread, setTopicForThread] = useState("");
+  const [threadLines, setThreadLines] = useState<string[]>([]);
+  const [loadingThread, setLoadingThread] = useState(false);
 
   useEffect(() => {
     // initialize ring from Clerk metadata
     const meta = (user?.publicMetadata as any) || {};
     setRing(Number(meta.ring || 0));
     setHistory(Array.isArray(meta.posts) ? meta.posts.slice(0,5) : []);
-  }, [user?.publicMetadata]);
+  }, [user?.id]); // Depend on user.id instead of user.publicMetadata to avoid re-renders
+
+  // Load family members
+  useEffect(() => {
+    const loadFamily = async () => {
+      try {
+        const res = await fetch("/api/family/list");
+        const data = await res.json();
+        setFamilyMembers(data.familyMembers || []);
+        setCombinedRingBalance(data.combinedRingBalance || 0);
+      } catch (e) {
+        console.error("Failed to load family members:", e);
+      }
+    };
+    loadFamily();
+  }, [user?.id]);
+
+  // Claim daily login bonus on component mount
+  useEffect(() => {
+    const claimDailyBonus = async () => {
+      try {
+        const res = await fetch("/api/ring/daily-login", { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          setRing(data.newBalance);
+          console.log("[dashboard] daily login bonus:", data.message);
+        }
+      } catch (e) {
+        console.error("Failed to claim daily bonus:", e);
+      }
+    };
+    if (user?.id) {
+      claimDailyBonus();
+    }
+  }, [user?.id]);
 
   // show success toast if returned from Stripe checkout
   useEffect(() => {
@@ -52,15 +100,110 @@ export default function Dashboard() {
     setLoading(true);
     setResult("");
 
-    const res = await fetch("/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
 
-    const data = await res.json();
-    setResult(data.content || data.error || "Something went wrong.");
-    setLoading(false);
+      if (!res.ok) {
+        const errorData = await res.json();
+        setResult(errorData.error || "Generation failed");
+        setLoading(false);
+        return;
+      }
+
+      // Handle streaming response
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) {
+        setResult("No response from server");
+        setLoading(false);
+        return;
+      }
+
+      let fullContent = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split("\n");
+        
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const token = line.slice(6);
+            if (token && token !== "[DONE]") {
+              fullContent += token;
+              setResult(fullContent);
+            }
+          }
+        }
+      }
+      
+      setLoading(false);
+    } catch (error: any) {
+      console.error("[generate] error:", error);
+      setResult(`Error: ${error.message}`);
+      setLoading(false);
+    }
+  };
+
+  const generateViralThread = async () => {
+    if (!topicForThread.trim()) return;
+    setLoadingThread(true);
+    setThreadLines([]);
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: topicForThread,
+          mode: "viral_thread",
+          userId: user?.id, // Pass Clerk user ID for personalized context
+        }),
+      });
+
+      if (!res.ok) {
+        alert("Failed to generate thread");
+        setLoadingThread(false);
+        return;
+      }
+
+      // Stream response as SSE
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) {
+        setLoadingThread(false);
+        return;
+      }
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith("data: ")) {
+            const threadLine = line.substring(6);
+            setThreadLines((prev) => [...prev, threadLine]);
+          }
+        }
+        buffer = lines[lines.length - 1];
+      }
+
+      setLoadingThread(false);
+    } catch (error) {
+      console.error("Thread generation error:", error);
+      alert("Error generating thread");
+      setLoadingThread(false);
+    }
   };
 
   return (
@@ -100,7 +243,7 @@ export default function Dashboard() {
                   window.location.href = sessionUrl;
                 } catch (err: any) {
                   console.error("checkout click error:", err);
-                  alert(err?.message || `${err}`);
+                  alert(err?.message || String(err));
                 }
               }}
               className="px-20 py-10 bg-gradient-to-r from-yellow-400 to-yellow-600 hover:from-yellow-500 hover:to-yellow-700 rounded-3xl text-5xl font-black text-black shadow-2xl transform hover:scale-110 transition duration-300"
@@ -198,10 +341,10 @@ export default function Dashboard() {
                   >
                     {loading ? "Posting..." : "Post to IG Now"}
                   </button>
-
                   <button
                     onClick={async () => {
-                      const mins = Number(prompt("Schedule in how many minutes? (default 1)")) || 1;
+                      const minsInput = prompt("Schedule in how many minutes? (default 1)");
+                      const mins = (minsInput ? Number(minsInput) : 1) || 1;
                       setLoading(true);
                       const res = await fetch("/api/schedule-post", {
                         method: "POST",
@@ -229,9 +372,133 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* ==== VIRAL THREAD GENERATOR ==== */}
+        <div className="mt-8 bg-white/10 backdrop-blur-xl rounded-3xl p-10 shadow-2xl">
+          <h2 className="text-4xl font-bold mb-8">🔥 Generate Full Viral Thread</h2>
+          <p className="mb-4 text-gray-300">Multi-agent research → write → optimize pipeline</p>
+
+          <textarea
+            value={topicForThread}
+            onChange={(e) => setTopicForThread(e.target.value)}
+            placeholder="e.g., Why AI will replace content creators, Bootstrap SaaS revenue milestones, etc."
+            className="w-full h-24 p-6 rounded-2xl bg-white/5 border border-white/20 text-white placeholder-white/50 text-xl focus:outline-none focus:border-purple-500 resize-none"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                generateViralThread();
+              }
+            }}
+          />
+
+          <button
+            onClick={generateViralThread}
+            disabled={loadingThread || !topicForThread.trim()}
+            className="mt-8 px-12 py-6 bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-500 hover:to-pink-500 disabled:opacity-50 rounded-2xl text-2xl font-bold transition transform hover:scale-105"
+          >
+            {loadingThread ? "Researching & Writing..." : "Generate Full Thread"}
+          </button>
+
+          {threadLines.length > 0 && (
+            <div className="mt-12 p-8 bg-black/40 rounded-2xl border border-pink-500">
+              <strong>Generated Thread Preview:</strong>
+              <div className="mt-4 space-y-3">
+                {threadLines.map((line, idx) => (
+                  <div key={idx} className="p-3 bg-white/5 rounded border border-white/10 text-sm leading-relaxed">
+                    {line}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-4">
+                <button
+                  onClick={async () => {
+                    const threadContent = threadLines.join("\n");
+                    setLoading(true);
+                    const res = await fetch("/api/post-to-x", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ content: threadContent }),
+                    });
+                    const data = await res.json();
+                    setLoading(false);
+                    if (data.success) {
+                      setRing((r) => r + 50);
+                      setThreadLines([]);
+                      setTopicForThread("");
+                      alert(`Posted! ${data.url}`);
+                    } else {
+                      alert(`Error: ${data.error}`);
+                    }
+                  }}
+                  disabled={loading}
+                  className="px-10 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-bold"
+                >
+                  {loading ? "Posting..." : "📤 Post Thread to X"}
+                </button>
+
+                <button
+                  onClick={() => navigator.clipboard.writeText(threadLines.join("\n"))}
+                  className="px-8 py-4 bg-gray-700 hover:bg-gray-600 rounded-xl font-bold"
+                >
+                  📋 Copy Thread
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         <p className="text-center mt-20 text-xl opacity-70">
           Welcome back, {user?.firstName || "King"}
         </p>
+
+        {/* RING Spending Actions */}
+        <div className="mt-8 bg-white/5 p-6 rounded-2xl border border-white/10">
+          <h3 className="text-2xl font-bold mb-4">RING Actions</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/ring/spend", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "boost" }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) return alert(data.error || "Failed to boost");
+                  setRing(data.newBalance);
+                  alert(data.message + " (-100 RING)");
+                } catch (e) {
+                  console.error(e);
+                  alert("Boost failed");
+                }
+              }}
+              className="px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 rounded-lg font-bold text-lg"
+            >
+              🚀 Boost Latest Post (-100 RING)
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/ring/spend", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "lease-username" }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) return alert(data.error || "Failed to lease");
+                  setRing(data.newBalance);
+                  alert(data.message + " (-200 RING)");
+                } catch (e) {
+                  console.error(e);
+                  alert("Lease failed");
+                }
+              }}
+              className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-lg font-bold text-lg"
+            >
+              👑 Lease Premium Name (-200 RING)
+            </button>
+          </div>
+        </div>
 
         {/* Referral & Promo */}
         <div className="mt-8 bg-white/5 p-6 rounded-2xl">
@@ -285,6 +552,70 @@ export default function Dashboard() {
           </div>
 
           {/* Post history */}
+          <div className="mt-12 mb-6 p-8 bg-white/5 rounded-2xl border border-white/10">
+            <h3 className="text-3xl font-bold mb-6">Family Accounts</h3>
+            <div className="text-lg mb-4">
+              <strong>Combined RING Balance:</strong> <span className="text-yellow-300 font-bold">{combinedRingBalance}</span>
+            </div>
+
+            <div className="mb-6 flex gap-2">
+              <input
+                value={newMemberName}
+                onChange={(e) => setNewMemberName(e.target.value)}
+                placeholder="Member name (e.g. John, Jane)"
+                className="flex-1 px-4 py-2 rounded bg-white/5 border border-white/10"
+              />
+              <button
+                onClick={async () => {
+                  if (!newMemberName.trim()) return alert("Please enter a name");
+                  setLoadingFamily(true);
+                  try {
+                    const res = await fetch("/api/family/create", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ name: newMemberName }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) return alert(data.error || "Failed to create family member");
+                    setFamilyMembers([...familyMembers, data.familyMember]);
+                    setCombinedRingBalance((c) => c + 0); // they start with 0
+                    setNewMemberName("");
+                    alert(`Created family member: ${newMemberName}`);
+                  } catch (e) {
+                    console.error(e);
+                    alert("Failed to create family member");
+                  } finally {
+                    setLoadingFamily(false);
+                  }
+                }}
+                disabled={loadingFamily}
+                className="px-6 py-2 bg-purple-600 hover:bg-purple-500 rounded disabled:opacity-50"
+              >
+                {loadingFamily ? "Creating..." : "Create Member"}
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {familyMembers.length === 0 ? (
+                <p className="opacity-60">No family members yet. Create one above.</p>
+              ) : (
+                familyMembers.map((member) => (
+                  <div key={member.id} className="p-4 bg-white/5 rounded border border-white/10 flex items-center justify-between">
+                    <div>
+                      <strong>{member.name}</strong>
+                      <span className="ml-3 text-yellow-300">RING: {member.ringBalance}</span>
+                      {member.verified && (
+                        <span className="ml-3 text-blue-400">
+                          ✓ Verified
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           <div className="mt-6">
             <strong>Recent Posts</strong>
             <table className="w-full mt-3 text-left">

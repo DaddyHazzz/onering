@@ -5,3 +5,9 @@ rq
 python-dotenv
 pydantic
 passlib[bcrypt]
+langgraph
+langchain
+langchain-core
+langchain-groq
+groq
+temporalio
