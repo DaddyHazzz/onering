@@ -38,18 +38,18 @@ try:
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     load_dotenv(dotenv_path=os.path.join(backend_dir, '.env'))
     print("[Test]     ✓ dotenv loaded")
-    
+
     print("[Test]   - Loading backend.core.config...")
     sys.path.insert(0, backend_dir)
     sys.path.insert(0, workspace_root)
     from backend.core.config import settings
     print("[Test]     ✓ config loaded")
-    
+
     print("[Test]   - Loading backend.core.logging...")
     from backend.core.logging import configure_logging
     configure_logging()
     print("[Test]     ✓ logging configured")
-    
+
     print("[Test] ✓ All imports successful")
 except Exception as e:
     print(f"[Test] ✗ Import failed: {e}")

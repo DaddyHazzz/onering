@@ -135,12 +135,12 @@ async def stream_viral_thread_response(prompt: str, user_id: str = None):
     try:
         # Call sync function - it should not block since LangGraph is fast
         thread_lines = generate_viral_thread(prompt, user_id=user_id)
-        
+
         if not thread_lines:
             logger.warning(f"[/v1/generate/content] no tweets generated for prompt")
             yield "data: ERROR: Failed to generate thread\n\n"
             return
-            
+
         logger.info(f"[/v1/generate/content] generated thread with {len(thread_lines)} tweets")
 
         # Stream each tweet separately (no numbering, they're already clean from optimizer)
@@ -152,7 +152,7 @@ async def stream_viral_thread_response(prompt: str, user_id: str = None):
             tweet_clean = re.sub(r'^\d+(/\d+)?[.):\-\]]*\s*', '', tweet_clean).strip()
             # Remove leading bullets
             tweet_clean = re.sub(r'^[-•*]+\s*', '', tweet_clean).strip()
-            
+
             if tweet_clean:
                 yield f"data: {tweet_clean}\n\n"
 

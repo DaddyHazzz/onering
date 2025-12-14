@@ -4,7 +4,7 @@ from typing import Optional
 class Settings(BaseSettings):
     # Environment
     ENV: str = "development"
-    
+
     # Core APIs
     GROQ_API_KEY: Optional[str] = None
 

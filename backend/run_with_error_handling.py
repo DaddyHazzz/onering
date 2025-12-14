@@ -16,7 +16,7 @@ if __name__ == "__main__":
         print("[Backend] Starting on http://localhost:8000")
         print("[Backend] Press CTRL+C to stop")
         print()
-        
+
         # Run without reload to avoid multiprocessing issues on Windows
         uvicorn.run(
             "main:app",
