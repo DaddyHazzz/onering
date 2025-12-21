@@ -6,10 +6,12 @@ import { prisma } from "@/lib/db";
 import { embedUserProfile } from "@/lib/embeddings";
 import { getErrorMessage } from "@/lib/error-handler";
 
-const schema = z.object({
-  prompt: z.string().min(1).max(2000), // plenty for long threads
-  mode: z.string().optional().default("simple"), // "simple" or "viral_thread"
-  userId: z.string().optional(), // Optional Clerk user ID for personalized context
+export const schema = z.object({
+  prompt: z.string().min(1).max(2000),
+  type: z.enum(["simple", "viral_thread"]).default("simple"),
+  platform: z.string().min(1).default("x"),
+  user_id: z.string().min(1),
+  stream: z.boolean().optional().default(true),
 });
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
@@ -20,9 +22,9 @@ export async function POST(req: NextRequest) {
     const callerClerkId = caller?.id;
 
     const body = await req.json();
-    const { prompt, mode, userId } = schema.parse(body);
+    const { prompt, type, platform, user_id, stream } = schema.parse(body);
 
-    console.log("[generate] forwarding prompt to backend:", prompt.slice(0, 50) + "...", { mode, userId });
+    console.log("[generate] forwarding prompt to backend:", prompt.slice(0, 50) + "...", { type, platform, user_id, stream });
 
     // Auto-embed user profile on first generation if userId provided
     // NOTE: Disabled for now - profileEmbedding is Unsupported("vector") type
@@ -66,8 +68,10 @@ export async function POST(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt,
-        mode,
-        user_id: userId, // Pass to backend for pgvector context
+        type,
+        platform,
+        user_id,
+        stream,
       }),
     });
 

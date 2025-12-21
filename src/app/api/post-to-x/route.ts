@@ -11,20 +11,28 @@ const schema = z.object({
   content: z.string().min(1),
 });
 
-// Redis client for rate limiting
-const redis = new Redis({
-  host: process.env.REDIS_HOST || "localhost",
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  db: 0,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
-});
+const success = (payload: Record<string, unknown>, status = 200) =>
+  Response.json({ success: true, ...payload }, { status });
 
-redis.on("error", (err) => {
-  console.error("[post-to-x] Redis error:", err);
-});
+const failure = (error: string, status = 500, extra: Record<string, unknown> = {}) =>
+  Response.json({ success: false, error, ...extra }, { status });
+
+let _redis: Redis | null = null;
+function getRedis(): Redis {
+  if (_redis) return _redis;
+  const client = new Redis({
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+    db: 0,
+    retryStrategy: (times) => Math.min(times * 50, 2000),
+    lazyConnect: true,
+  });
+  client.on("error", (err) => {
+    console.error("[post-to-x] Redis error:", err);
+  });
+  _redis = client;
+  return client;
+}
 
 // Rate limiting constants: max 5 posts per hour per user
 const RATE_LIMIT_WINDOW_SECONDS = 3600; // 1 hour
@@ -36,6 +44,7 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; remai
   const windowStart = now - RATE_LIMIT_WINDOW_SECONDS * 1000;
 
   try {
+    const redis = getRedis();
     // Use Redis ZSET for sliding window: score = timestamp, member = request ID
     // Remove expired entries
     await redis.zremrangebyscore(key, 0, windowStart);
@@ -77,20 +86,14 @@ export async function POST(req: NextRequest) {
     console.log("[post-to-x] currentUser:", userId);
 
     if (!userId) {
-      return Response.json({ error: "Not authenticated" }, { status: 401 });
+      return failure("Not authenticated", 401);
     }
 
     const rateLimitCheck = await checkRateLimit(userId);
     if (!rateLimitCheck.allowed) {
-      return Response.json(
-        { error: "Rate limit exceeded. Maximum 5 posts per hour." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimitCheck.retryAfter.toString(),
-          },
-        }
-      );
+      return failure("Rate limit exceeded. Maximum 5 posts per hour.", 429, {
+        retryAfter: rateLimitCheck.retryAfter,
+      });
     }
 
     const body = await req.json();
@@ -99,9 +102,10 @@ export async function POST(req: NextRequest) {
     // Verify credentials exist
     if (!process.env.TWITTER_API_KEY || !process.env.TWITTER_API_SECRET || !process.env.TWITTER_ACCESS_TOKEN || !process.env.TWITTER_ACCESS_TOKEN_SECRET) {
       console.error("[post-to-x] missing Twitter credentials in environment");
-      return Response.json({ 
-        error: "Twitter credentials not configured. Add TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET to .env.local" 
-      }, { status: 500 });
+      return failure(
+        "Twitter credentials not configured. Add TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET to .env.local",
+        500
+      );
     }
 
     const client = new TwitterApi({
@@ -126,19 +130,21 @@ export async function POST(req: NextRequest) {
       
       const errorDetail = authErr.data?.detail || authErr.data?.error || authErr.message;
       if (authErr.status === 403) {
-        return Response.json({
-          error: "Twitter API 403: Not Permitted. Your app may lack 'Read+Write' permissions or tokens are invalid.",
-          detail: errorDetail,
-          suggestedFix: "1. Check Twitter Developer Portal for app permissions (needs Read+Write+DM)\n2. Regenerate API keys if expired\n3. Update .env.local with fresh credentials\n4. Ensure app is linked to your account",
-          status: 403
-        }, { status: 403 });
+        return failure(
+          "Twitter API 403: Not Permitted. Your app may lack 'Read+Write' permissions or tokens are invalid.",
+          403,
+          {
+            detail: errorDetail,
+            suggestedFix:
+              "1. Check Twitter Developer Portal for app permissions (needs Read+Write+DM)\n2. Regenerate API keys if expired\n3. Update .env.local with fresh credentials\n4. Ensure app is linked to your account",
+          }
+        );
       } else if (authErr.status === 401) {
-        return Response.json({
-          error: "Twitter API 401: Unauthorized. Your credentials are invalid or expired.",
-          detail: errorDetail,
-          suggestedFix: "Regenerate API keys from Twitter Developer Portal and update .env.local",
-          status: 401
-        }, { status: 401 });
+        return failure(
+          "Twitter API 401: Unauthorized. Your credentials are invalid or expired.",
+          401,
+          { detail: errorDetail, suggestedFix: "Regenerate API keys from Twitter Developer Portal and update .env.local" }
+        );
       }
       throw authErr;
     }
@@ -177,13 +183,16 @@ export async function POST(req: NextRequest) {
         
         // If it's a 403, provide detailed help
         if (tweetErr.status === 403) {
-          return Response.json({
-            error: `Tweet ${i + 1} failed with 403 Forbidden: You are not permitted to perform this action.`,
-            detail: tweetErr.data?.detail || "Likely due to insufficient permissions or write-only token restriction",
-            suggestedFix: "Check Twitter app permissions require 'Read + Write'. Regenerate tokens in Developer Portal.",
-            failedTweetIndex: i + 1,
-            failedTweetText: text.slice(0, 200)
-          }, { status: 403 });
+          return failure(
+            `Tweet ${i + 1} failed with 403 Forbidden: You are not permitted to perform this action.`,
+            403,
+            {
+              detail: tweetErr.data?.detail || "Likely due to insufficient permissions or write-only token restriction",
+              suggestedFix: "Check Twitter app permissions require 'Read + Write'. Regenerate tokens in Developer Portal.",
+              failedTweetIndex: i + 1,
+              failedTweetText: text.slice(0, 200),
+            }
+          );
         }
         
         throw new Error(`Tweet ${i + 1} failed: ${tweetErr.message || tweetErr.code} (HTTP ${tweetErr.status})`);
@@ -275,9 +284,9 @@ export async function POST(req: NextRequest) {
       console.error("[post-to-x] failed to write to database:", dbErr);
     }
 
-    return Response.json({ success: true, url, remaining: rateLimitCheck.remaining });
+    return success({ url, remaining: rateLimitCheck.remaining });
   } catch (error: any) {
     console.error("[post-to-x] X post failed:", error);
-    return Response.json({ error: error.message || "Failed to post to X" }, { status: 500 });
+    return failure(error.message || "Failed to post to X", 500);
   }
 }

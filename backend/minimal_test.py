@@ -23,8 +23,8 @@ print("[Test] Step 1: Import FastAPI")
 from fastapi import FastAPI
 app = FastAPI(title="TestApp")
 
-@app.get("/test")
-def test():
+@app.get("/demo")
+def demo():
     return {"status": "ok"}
 
 print("[Test]   ✓ FastAPI imported, basic app created")

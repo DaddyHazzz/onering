@@ -9,20 +9,28 @@ const schema = z.object({
   content: z.string().min(1),
 });
 
-// Redis client for rate limiting
-const redis = new Redis({
-  host: process.env.REDIS_HOST || "localhost",
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  db: 0,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
-});
+const success = (payload: Record<string, unknown>, status = 200) =>
+  Response.json({ success: true, ...payload }, { status });
 
-redis.on("error", (err) => {
-  console.error("[post-to-ig] Redis error:", err);
-});
+const failure = (error: string, status = 500, extra: Record<string, unknown> = {}) =>
+  Response.json({ success: false, error, ...extra }, { status });
+
+let _redis: Redis | null = null;
+function getRedis(): Redis {
+  if (_redis) return _redis;
+  const client = new Redis({
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+    db: 0,
+    retryStrategy: (times) => Math.min(times * 50, 2000),
+    lazyConnect: true,
+  });
+  client.on("error", (err) => {
+    console.error("[post-to-ig] Redis error:", err);
+  });
+  _redis = client;
+  return client;
+}
 
 // Rate limiting: max 3 posts per day per user
 const RATE_LIMIT_WINDOW_SECONDS = 86400; // 24 hours
@@ -34,6 +42,7 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; remai
   const windowStart = now - RATE_LIMIT_WINDOW_SECONDS * 1000;
 
   try {
+    const redis = getRedis();
     await redis.zremrangebyscore(key, 0, windowStart);
     const count = await redis.zcard(key);
 
@@ -43,8 +52,9 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; remai
     }
 
     const requestId = `${now}-${Math.random().toString(36).substring(7)}`;
-    await redis.zadd(key, now, requestId);
-    await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS);
+    const redis2 = getRedis();
+    await redis2.zadd(key, now, requestId);
+    await redis2.expire(key, RATE_LIMIT_WINDOW_SECONDS);
 
     const remaining = RATE_LIMIT_MAX_POSTS - count - 1;
     console.log(`[post-to-ig] rate limit check passed: ${count + 1}/${RATE_LIMIT_MAX_POSTS}`);
@@ -148,15 +158,14 @@ export async function POST(req: NextRequest) {
     console.log("[post-to-ig] currentUser:", userId);
 
     if (!userId) {
-      return Response.json({ error: "Not authenticated" }, { status: 401 });
+      return failure("Not authenticated", 401);
     }
 
     const rateLimitCheck = await checkRateLimit(userId);
     if (!rateLimitCheck.allowed) {
-      return Response.json(
-        { error: "Rate limit exceeded. Maximum 3 posts per day." },
-        { status: 429 }
-      );
+      return failure("Rate limit exceeded. Maximum 3 posts per day.", 429, {
+        retryAfter: RATE_LIMIT_WINDOW_SECONDS,
+      });
     }
 
     const body = await req.json();
@@ -166,7 +175,7 @@ export async function POST(req: NextRequest) {
     const result = await postToInstagram(content, userId);
 
     if (!result.success) {
-      return Response.json({ error: result.error }, { status: 500 });
+      return failure(result.error || "Failed to post to Instagram", 500);
     }
 
     // Award RING on success
@@ -228,16 +237,9 @@ export async function POST(req: NextRequest) {
       console.error("[post-to-ig] database error:", dbErr);
     }
 
-    return Response.json({
-      success: true,
-      id: result.id,
-      remaining: rateLimitCheck.remaining,
-    });
+    return success({ id: result.id, remaining: rateLimitCheck.remaining });
   } catch (error: any) {
     console.error("[post-to-ig] error:", error);
-    return Response.json(
-      { error: error.message || "Failed to post to Instagram" },
-      { status: 500 }
-    );
+    return failure(error.message || "Failed to post to Instagram", 500);
   }
 }

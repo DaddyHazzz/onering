@@ -1,71 +1,49 @@
-﻿param([switch]$SkipDocker, [switch]$SkipStripe, [switch]$NoOpen)
-$ErrorActionPreference = "Continue"
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+﻿# OneRing - Start All Services
+# Run this script to start backend, frontend, and Stripe CLI in separate windows
 
-Write-Host "=" * 70 -ForegroundColor Cyan
-Write-Host "OneRing Startup" -ForegroundColor Cyan
-Write-Host "=" * 70 -ForegroundColor Cyan
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "   OneRing - Starting All Services" -ForegroundColor Green
+Write-Host "========================================`n" -ForegroundColor Cyan
+
+# Get script directory
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# 1. Start Backend (FastAPI + uvicorn on port 8000)
+Write-Host "[1/3] Starting FastAPI Backend..." -ForegroundColor Yellow
+$backendCmd = "cd '$scriptDir'; Write-Host 'Starting Backend on http://localhost:8000' -ForegroundColor Green; C:\Python314\python.exe backend\start_backend.py"
+Start-Process powershell -ArgumentList "-NoExit", "-NoProfile", "-Command", $backendCmd
+
+Write-Host "      Waiting for backend to initialize..." -ForegroundColor Gray
+Start-Sleep -Seconds 4
+
+# 2. Start Next.js Frontend (port 3000)
+Write-Host "[2/3] Starting Next.js Frontend..." -ForegroundColor Yellow
+$frontendCmd = "cd '$scriptDir'; Write-Host 'Starting Frontend on http://localhost:3000' -ForegroundColor Green; pnpm dev"
+Start-Process powershell -ArgumentList "-NoExit", "-NoProfile", "-Command", $frontendCmd
+
+Write-Host "      Waiting for frontend to initialize..." -ForegroundColor Gray
+Start-Sleep -Seconds 3
+
+# 3. Start Stripe CLI (webhook forwarding)
+Write-Host "[3/3] Starting Stripe CLI..." -ForegroundColor Yellow
+$stripeCmd = "cd '$scriptDir'; Write-Host 'Starting Stripe webhook forwarding' -ForegroundColor Green; stripe listen --forward-to localhost:3000/api/stripe/webhook"
+Start-Process powershell -ArgumentList "-NoExit", "-NoProfile", "-Command", $stripeCmd
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "   ✓ All Services Started Successfully!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-
-# Check tools
-$missing = @()
-if (-not (Get-Command python -EA SilentlyContinue)) { $missing += "Python" }
-if (-not (Get-Command node -EA SilentlyContinue)) { $missing += "Node.js" }
-if (-not (Get-Command pnpm -EA SilentlyContinue)) { $missing += "pnpm" }
-
-if ($missing) {
-    Write-Host "Error: Missing $($missing -join ', ')" -ForegroundColor Red
-    exit 1
-}
-Write-Host " Prerequisites OK" -ForegroundColor Green
+Write-Host "  Backend:  http://localhost:8000" -ForegroundColor Yellow
+Write-Host "  Frontend: http://localhost:3000" -ForegroundColor Yellow
+Write-Host "  Stripe:   Listening for webhooks" -ForegroundColor Yellow
 Write-Host ""
-
-# Docker
-if (-not $SkipDocker) {
-    Write-Host "Starting Docker..." -ForegroundColor Cyan
-    if (docker ps 2>$null | Select-String postgres) {
-        Write-Host " Docker running" -ForegroundColor Green
-    } else {
-        docker-compose -f "$Root\infra\docker-compose.yml" up -d
-        Start-Sleep 3
-        Write-Host " Docker started" -ForegroundColor Green
-    }
-    Write-Host ""
-}
-
-# Services
-Write-Host "Starting Backend..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$Root\backend'; python run_with_error_handling.py" -WindowStyle Normal
-Start-Sleep 4
-Write-Host " Backend started" -ForegroundColor Green
+Write-Host "Three terminal windows opened:" -ForegroundColor Gray
+Write-Host "  - Backend (Python/FastAPI)" -ForegroundColor Gray
+Write-Host "  - Frontend (Next.js)" -ForegroundColor Gray
+Write-Host "  - Stripe CLI" -ForegroundColor Gray
 Write-Host ""
-
-Write-Host "Starting Worker..." -ForegroundColor Cyan
-Start-Process python -ArgumentList "-m", "rq", "worker", "-u", "redis://localhost:6379", "default" -WorkingDirectory $Root -WindowStyle Minimized
-Start-Sleep 2
-Write-Host " Worker started" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "Starting Frontend..." -ForegroundColor Cyan
-Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d $Root && pnpm dev" -WindowStyle Normal
-Start-Sleep 5
-Write-Host " Frontend started" -ForegroundColor Green
-Write-Host ""
-
-if (-not $SkipStripe) {
-    if (Get-Command stripe -EA SilentlyContinue) {
-        Write-Host "Starting Stripe..." -ForegroundColor Cyan
-        Start-Process stripe -ArgumentList "listen", "--forward-to", "localhost:3000/api/stripe/webhook" -NoNewWindow
-        Write-Host " Stripe started" -ForegroundColor Green
-        Write-Host ""
-    }
-}
-
-Write-Host "=" * 70 -ForegroundColor Green
-Write-Host "Ready! http://localhost:3000" -ForegroundColor Green
-Write-Host "=" * 70 -ForegroundColor Green
-
-if (-not $NoOpen) {
-    Start-Sleep 2
-    Start-Process "http://localhost:3000"
-}
+Write-Host "Close those windows to stop the services." -ForegroundColor Gray
+Write-Host "Press any key to close this launcher..." -ForegroundColor Cyan
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

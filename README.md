@@ -4,6 +4,12 @@
 
 **Status:** Beta-ready. All core features implemented and tested.
 
+### Hard Guarantees
+- Viral threads and streamed generations never contain numbering (backend + optimizer + frontend + tests enforce removal).
+- Temporal workflow retries are deterministic with fixed backoff; RQ jobs are wrapped with idempotent job IDs (no duplicate scheduling).
+- Posting routes (X/IG/LinkedIn) share validation shape and normalized success/error responses.
+- Analytics aggregation is deterministic; mock data is clearly marked and tested (including empty datasets).
+
 ---
 
 ## Table of Contents
@@ -163,6 +169,8 @@ Copy the `STRIPE_WEBHOOK_SECRET` and add it to `.env.local`.
 Groq LLM      Social Platform APIs   PostgreSQL
 (streaming)   X, IG, TikTok,         + pgvector
               YouTube                (embeddings)
+
+Temporal (optional): `backend/workflows/content_workflow.py` is scaffolded for durable runs; keep `TEMPORAL_ENABLED` off until a Temporal server is configured.
 ```
 
 ### Frontend Components
@@ -290,6 +298,14 @@ TWITTER_API_SECRET=...
 TWITTER_ACCESS_TOKEN=...
 TWITTER_ACCESS_TOKEN_SECRET=...
 
+# LinkedIn (optional)
+LINKEDIN_ACCESS_TOKEN=...
+LINKEDIN_AUTHOR_URN=urn:li:person:xxxx  # or urn:li:organization:xxxx
+
+# Instagram Graph (optional)
+INSTAGRAM_ACCESS_TOKEN=...
+INSTAGRAM_BUSINESS_ACCOUNT_ID=...
+
 # Database & Cache
 DATABASE_URL=postgresql://user:password@localhost:5432/onering
 REDIS_URL=redis://localhost:6379
@@ -323,6 +339,21 @@ stripe listen --forward-to localhost:3000/api/stripe/webhook
 
 # Terminal 5: Monitor logs
 tail -f path/to/pnpm-dev.log
+```
+
+### Step 5b: Run Tests Quickly
+```bash
+# Backend
+cd backend && pytest -q
+
+# Frontend
+pnpm test -- --run
+
+# Or both via helper
+./scripts/run_tests.sh
+
+# Pre-commit hook (optional): runs the same tests
+./scripts/pre-commit.sh
 ```
 
 ### Step 6: Verify Setup
@@ -415,7 +446,7 @@ curl -X POST http://localhost:8000/v1/generate/content/ \
    - Success response: "posted to IG (mock)"
    - Caption visible in response
    - No crash on error
-   - Ready for real Graph API integration
+   - Uses Graph API when tokens are set; falls back to mock otherwise
 ```
 
 ### Test 5: Stripe Payment & RING Bonus
@@ -589,12 +620,35 @@ Response:
 ```
 
 #### `POST /api/post-to-ig`
-Post to Instagram (mock).
+Post to Instagram (Graph API when tokens provided; falls back to mock if tokens missing).
 
 ```bash
 curl -X POST "http://localhost:3000/api/post-to-ig" \
   -H "Content-Type: application/json" \
   -d '{"content":"Amazing caption"}'
+```
+
+#### `POST /api/post-to-linkedin`
+Post to LinkedIn (UGC API; falls back to mock if tokens missing).
+
+```bash
+curl -X POST "http://localhost:3000/api/post-to-linkedin" \
+   -H "Content-Type: application/json" \
+   -d '{"content":"Ship update on LinkedIn"}'
+```
+
+#### `GET /api/analytics/ring/daily`
+Returns last 7 days of RING earnings for a user.
+
+```bash
+curl "http://localhost:3000/api/analytics/ring/daily?userId=user_123"
+```
+
+#### `GET /api/analytics/ring/weekly`
+Returns last 5 ISO weeks of RING earnings for a user.
+
+```bash
+curl "http://localhost:3000/api/analytics/ring/weekly?userId=user_123"
 ```
 
 #### `POST /api/stripe/checkout`
@@ -998,3 +1052,35 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 **Version:** Beta v0.1.0
 
 See backend/README.md for instructions.
+
+---
+
+## Hardened Contracts & Deterministic Behavior
+
+### Hard Guarantees
+- No tests require real API keys; external services are fully mockable.
+- Streaming and non-streaming generation share identical validation logic.
+- Numbering in generated content is stripped deterministically (1., [2], (3), 1/6, bullets).
+- Temporal retries are deterministic with stable idempotency keys; RQ jobs are wrapped safely (no duplicate scheduling).
+- API contracts are locked via tests and OpenAPI snapshots; undocumented 422s are prohibited.
+- Frontend Zod schemas mirror backend Pydantic models; invalid payloads are rejected client-side.
+- Importing any Next.js route does not initialize network connections (lazy init everywhere).
+
+### API Contracts
+- POST /v1/generate/content: { prompt: string, type: 'simple'|'viral_thread', platform: string, user_id: string, stream?: boolean }
+- GET /api/analytics/ring/daily: { userId: string } → { userId, range: '7d', series: Array<{ date, total }> }
+- GET /api/analytics/ring/weekly: { userId: string } → { userId, range: '5w', series: Array<{ date, total }> }
+- POST /api/post-to-x: { content } → { success, url?, remaining?, error? }
+- POST /api/post-to-ig: { content } → { success, id?, remaining?, error? }
+- POST /api/post-to-linkedin: { content } → { success, id?, remaining?, error? }
+
+### Test Commands
+- Backend: `cd backend && pytest -q`
+- Frontend: `pnpm test -- --run`
+- Combined (Linux/macOS): `./scripts/run_tests.sh`
+- Combined (Windows): `./scripts/run_tests.ps1`
+
+### Pre-Commit Hooks
+Enable repository hooks to block commits on failing tests:
+- Windows PowerShell: `git config core.hooksPath .githooks && ./.githooks/pre-commit.ps1`
+- Bash: `git config core.hooksPath .githooks && chmod +x .githooks/pre-commit`

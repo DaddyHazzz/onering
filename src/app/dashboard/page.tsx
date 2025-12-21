@@ -104,7 +104,13 @@ export default function Dashboard() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          type: "simple",
+          platform: "x",
+          user_id: user?.id || "anon",
+          stream: true,
+        }),
       });
 
       if (!res.ok) {
@@ -161,8 +167,10 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: topicForThread,
-          mode: "viral_thread",
-          userId: user?.id, // Pass Clerk user ID for personalized context
+          type: "viral_thread",
+          platform: "x",
+          user_id: user?.id || "anon",
+          stream: true,
         }),
       });
 

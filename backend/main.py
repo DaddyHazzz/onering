@@ -4,7 +4,9 @@ import sys
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI
+import re
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -23,7 +25,7 @@ sys.path.insert(0, parent_dir)
 try:
     from backend.core.config import settings
     from backend.core.logging import configure_logging
-    from backend.api import auth, posts
+    from backend.api import auth, posts, analytics
     from backend.agents.viral_thread import generate_viral_thread
     import groq
     from redis import Redis
@@ -39,7 +41,27 @@ except ImportError as e:
 
 configure_logging()
 
-app = FastAPI(title="OneRing - Backend (dev)")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger = logging.getLogger("onering")
+    logger.info("Starting OneRing backend...")
+    import time
+    app.state.startup_time = time.time()
+    try:
+        yield
+    finally:
+        logging.getLogger("onering").info("Stopping OneRing backend...")
+
+
+app = FastAPI(title="OneRing - Backend (dev)", lifespan=lifespan)
+
+
+def strip_numbering_line(text: str) -> str:
+    """Remove any leading numbering or bullets from a single line."""
+    return re.sub(r"^\s*(?:\d+(?:/\d+)?[.):\-\]]*\s*|(?:Tweet\s+)?\d+\s*[-:).]?\s*|[-•*]+\s*)", "", text).lstrip()
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -58,6 +80,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 
 @app.get("/healthz")
 def health():
@@ -87,8 +110,10 @@ def test_endpoint():
 # Define request schema for generation endpoint
 class GenerateRequest(BaseModel):
     prompt: str
-    mode: str = "simple"  # "simple" or "viral_thread"
-    user_id: Optional[str] = None  # Optional: for personalized context with pgvector
+    type: str  # "simple" or "viral_thread"
+    platform: str
+    user_id: str
+    stream: bool = True
 
 
 async def stream_groq_response(prompt: str):
@@ -116,10 +141,22 @@ async def stream_groq_response(prompt: str):
             stream=True,
         )
 
+        buffer = ""
+
         for chunk in stream:
-            if chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                yield f"data: {token}\n\n"
+            if not chunk.choices[0].delta.content:
+                continue
+            token = chunk.choices[0].delta.content
+            buffer += token
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                cleaned = strip_numbering_line(line)
+                if cleaned:
+                    yield f"data: {cleaned}\n\n"
+
+        if buffer.strip():
+            yield f"data: {strip_numbering_line(buffer)}\n\n"
 
         logger.info("[/v1/generate/content] streaming completed")
     except Exception as e:
@@ -144,14 +181,8 @@ async def stream_viral_thread_response(prompt: str, user_id: str = None):
         logger.info(f"[/v1/generate/content] generated thread with {len(thread_lines)} tweets")
 
         # Stream each tweet separately (no numbering, they're already clean from optimizer)
-        import re
         for tweet in thread_lines:
-            # Final cleanup: remove any remaining numbering the LLM might have added
-            tweet_clean = tweet.strip()
-            # Remove patterns like "1/6 ", "1. ", "[1] ", etc.
-            tweet_clean = re.sub(r'^\d+(/\d+)?[.):\-\]]*\s*', '', tweet_clean).strip()
-            # Remove leading bullets
-            tweet_clean = re.sub(r'^[-•*]+\s*', '', tweet_clean).strip()
+            tweet_clean = strip_numbering_line(tweet.strip()).strip()
 
             if tweet_clean:
                 yield f"data: {tweet_clean}\n\n"
@@ -162,44 +193,57 @@ async def stream_viral_thread_response(prompt: str, user_id: str = None):
         yield f"data: ERROR: {str(e)}\n\n"
 
 
-@app.post("/v1/generate/content", response_class=StreamingResponse)
+@app.post("/v1/generate/content")
 async def generate_content(body: GenerateRequest):
-    """
-    Stream generated content from Groq model or LangGraph viral thread chain.
-    Supports mode: "simple" or "viral_thread"
-    Optional user_id enables personalized context via pgvector similarity search.
-    """
+    """Generate or stream content with deterministic validation shared for streaming/non-streaming."""
     logger = logging.getLogger("onering")
-    logger.info(f"[/v1/generate/content] POST received, mode: {body.mode}, prompt length: {len(body.prompt)}")
+    logger.info(
+        f"[/v1/generate/content] POST received, type={body.type}, platform={body.platform}, stream={body.stream}"
+    )
 
     if not body.prompt or not body.prompt.strip():
         logger.error("[/v1/generate/content] empty prompt provided")
-        async def error_gen():
-            yield "data: ERROR: Prompt cannot be empty\n\n"
-        return StreamingResponse(error_gen(), media_type="text/event-stream")
+        raise HTTPException(status_code=422, detail="prompt cannot be empty")
 
-    if body.mode == "viral_thread":
-        response_generator = stream_viral_thread_response(body.prompt, user_id=body.user_id)
-    else:
-        response_generator = stream_groq_response(body.prompt)
+    if not body.platform.strip():
+        logger.error("[/v1/generate/content] empty platform provided")
+        raise HTTPException(status_code=422, detail="platform is required")
 
-    return StreamingResponse(
-        response_generator,
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+    if not body.user_id.strip():
+        logger.error("[/v1/generate/content] empty user_id provided")
+        raise HTTPException(status_code=422, detail="user_id is required")
+
+    if body.type not in {"simple", "viral_thread"}:
+        logger.error(f"[/v1/generate/content] invalid type: {body.type}")
+        raise HTTPException(status_code=422, detail="type must be 'simple' or 'viral_thread'")
+
+    response_generator = (
+        stream_viral_thread_response(body.prompt, user_id=body.user_id)
+        if body.type == "viral_thread"
+        else stream_groq_response(body.prompt)
     )
 
-@app.on_event("startup")
-async def on_startup():
-    logger = logging.getLogger("onering")
-    logger.info("Starting OneRing backend...")
-    # Track startup time for health check uptime calculation
-    import time
-    app.state.startup_time = time.time()
+    if body.stream:
+        return StreamingResponse(
+            response_generator,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # Non-streaming: collect the same cleaned tokens deterministically
+    content_parts = []
+    async for chunk in response_generator:
+        token = chunk.replace("data: ", "", 1).strip()
+        if token and not token.startswith("ERROR:"):
+            content_parts.append(token)
+
+    return {"content": "".join(content_parts)}
+
+# (startup handled by lifespan)
 
 
 # Redis & RQ setup for job queuing
@@ -257,6 +301,4 @@ async def schedule_twitter_post(body: SchedulePostRequest):
         }, 500
 
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    logging.getLogger("onering").info("Stopping OneRing backend...")
+# (shutdown handled by lifespan)

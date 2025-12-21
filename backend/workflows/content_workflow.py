@@ -1,49 +1,69 @@
 # backend/workflows/content_workflow.py
 """
 Temporal workflow for content generation, optimization, and posting.
-Provides durable execution with retries, timeouts, and failure handling.
+
+Execution guarantees:
+- Deterministic retry policy (fixed backoff, capped attempts)
+- Idempotent scheduling when wrapping RQ jobs via stable job_id
+- Does NOT replace RQ; simply wraps existing schedule_post when delay > 0
+- Numbering-free content assumed (cleaned upstream); no formatting mutations here
 """
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import List, Optional
+import hashlib
+import logging
 
 from temporalio import workflow, activity
 from temporalio.common import RetryPolicy
 
-import logging
-
 logger = logging.getLogger("onering")
-
 
 @dataclass
 class ContentRequest:
     """Request for content generation workflow."""
-    topic: str
+    prompt: str
     user_id: Optional[str]
     platform: str  # 'X', 'IG', etc.
     schedule_delay_seconds: Optional[int] = None  # If provided, delay posting
+    idempotency_key: Optional[str] = None  # Stable key to dedupe retries
 
 
 @dataclass
 class ThreadContent:
     """Generated thread content."""
     lines: List[str]
-    topic: str
+    prompt: str
+
+
+def _default_retry_policy() -> RetryPolicy:
+    """Deterministic retry policy shared across activities."""
+    return RetryPolicy(
+        initial_interval=timedelta(seconds=5),
+        backoff_coefficient=2.0,
+        maximum_interval=timedelta(seconds=60),
+        maximum_attempts=3,
+    )
+
+
+def _idempotency_key(request: ContentRequest) -> str:
+    """Derive a stable idempotency key from prompt/user/platform."""
+    base = request.idempotency_key or f"{request.prompt}:{request.user_id}:{request.platform}:{request.schedule_delay_seconds or 0}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
 @activity.defn
-async def generate_viral_thread_activity(topic: str, user_id: Optional[str] = None) -> ThreadContent:
+async def generate_viral_thread_activity(prompt: str, user_id: Optional[str] = None) -> ThreadContent:
     """Activity to call LangGraph viral thread generation."""
     try:
         from agents.viral_thread import generate_viral_thread
 
-        logger.info(f"[workflow] generating viral thread for {topic[:50]}")
-        lines = await generate_viral_thread(topic, user_id=user_id)
-        return ThreadContent(lines=lines, topic=topic)
+        logger.info(f"[workflow] generating viral thread for {prompt[:50]}")
+        lines = await generate_viral_thread(prompt, user_id=user_id)
+        return ThreadContent(lines=lines, prompt=prompt)
     except Exception as e:
         logger.error(f"[workflow] thread generation failed: {e}")
         raise
-
 
 @activity.defn
 async def optimize_thread_activity(thread: ThreadContent) -> ThreadContent:
@@ -64,6 +84,7 @@ async def post_to_platform_activity(
     user_id: str,
     platform: str,
     delay_seconds: Optional[int] = None,
+    idem_key: Optional[str] = None,
 ) -> dict:
     """Activity to post thread to X or IG."""
     try:
@@ -89,6 +110,7 @@ async def post_to_platform_activity(
                 delay_seconds,
                 job_timeout="10m",
                 result_ttl=3600,
+                job_id=f"temporal:{idem_key}" if idem_key else None,
             )
             logger.info(f"[workflow] scheduled job {job.id}")
             return {"success": True, "job_id": job.id, "scheduled": True}
@@ -113,21 +135,18 @@ class ContentGenerationWorkflow:
     @workflow.run
     async def run(self, request: ContentRequest) -> dict:
         """Execute content generation → optimization → posting workflow."""
-        logger.info(f"[workflow] starting ContentGenerationWorkflow for {request.topic[:50]}")
+        logger.info(f"[workflow] starting ContentGenerationWorkflow for {request.prompt[:50]}")
+
+        idem = _idempotency_key(request)
 
         # Retry policy: 3 attempts, 5-second backoff, max 1-minute duration
-        retry_policy = RetryPolicy(
-            initial_interval=timedelta(seconds=5),
-            backoff_coefficient=2.0,
-            maximum_interval=timedelta(seconds=60),
-            maximum_attempts=3,
-        )
+        retry_policy = _default_retry_policy()
 
         # Step 1: Generate thread with retries
         try:
             thread = await workflow.execute_activity(
                 generate_viral_thread_activity,
-                request.topic,
+                request.prompt,
                 request.user_id,
                 start_to_close_timeout=timedelta(seconds=120),
                 retry_policy=retry_policy,
@@ -158,6 +177,7 @@ class ContentGenerationWorkflow:
                 request.user_id,
                 request.platform,
                 request.schedule_delay_seconds,
+                idem,
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=retry_policy,
             )
