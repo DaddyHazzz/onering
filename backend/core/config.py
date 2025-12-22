@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # Database & Cache
     DATABASE_URL: Optional[str] = None
+    TEST_DATABASE_URL: Optional[str] = None
     REDIS_URL: str = "redis://localhost:6379"
 
     # X/Twitter API

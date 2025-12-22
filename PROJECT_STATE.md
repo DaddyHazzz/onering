@@ -1,8 +1,8 @@
 # OneRing — Project State (Canonical)
 
-**Last Updated:** December 21, 2025  
-**Status:** Phase 3.3c Complete; Phase 3.4 COMPLETE (Analytics + Leaderboard)  
-**Test Coverage:** Backend analytics: 49 tests passing; Frontend: 298 tests passing (analytics included)
+**Last Updated:** December 22, 2025  
+**Status:** Phase 3.5 COMPLETE (PostgreSQL Persistence); Phase 3.4 COMPLETE (Analytics + Leaderboard)  
+**Test Coverage:** Backend: 35 persistence tests + 49 analytics tests passing; Frontend: 298 tests passing
 
 ---
 
@@ -399,18 +399,70 @@ Deterministic share cards with full attribution, ring velocity metrics, and deep
 
 ---
 
-### Phase 3.5 — Persistence Layer (⏭️ PLANNED)
+### Phase 3.5 — Persistence Layer (✅ COMPLETE)
 
 **What It Is:**
-Migration from in-memory stores to PostgreSQL + pgvector for embeddings.
+Migration from in-memory stores to PostgreSQL for analytics events, collaboration drafts, and idempotency keys.
 
-**Work Items:**
-- Replace all `_drafts_store`, `_idempotency_keys` dicts with Prisma schema
-- Set up pgvector for user profile embeddings
-- Add database indexes for query performance
-- Implement connection pooling
+**Completed Work:**
 
-**Timeline:** Q1 2026
+#### Part 1: Database Foundation
+- `backend/core/database.py` — SQLAlchemy Core setup with connection pooling
+- 6 tables: `analytics_events`, `idempotency_keys`, `drafts`, `draft_segments`, `draft_collaborators`, `ring_passes`
+- Context managers: `get_db_session()` with auto-commit/rollback
+- Smart initialization: lazy engine creation, safe re-initialization
+- Tests: `backend/tests/test_database_foundation.py` (1/1 passing)
+
+#### Part 2: PostgreSQL Event Store
+- `backend/features/analytics/event_store_pg.py` — Persistent event store
+- Features: append(), get_events(), clear(), count() with PostgreSQL backend
+- Idempotency: UNIQUE constraint on (type, occurred_at, data_hash)
+- Deterministic ordering: (occurred_at ASC, id ASC)
+- Returns copies (not references) to prevent mutations
+- Tests: `backend/tests/test_event_store_pg.py` (12/12 passing)
+
+#### Part 3: Smart Store Switching
+- `backend/features/analytics/event_store.py` — get_event_store() with DATABASE_URL detection
+- Falls back to in-memory when DATABASE_URL not set
+- API agnostic: same interface for both backends
+- Tests: `backend/tests/test_event_store_switching.py` (5/5 passing)
+
+#### Part 4: Collaboration Draft Persistence
+- `backend/features/collaboration/persistence.py` — DraftPersistence class (420 lines)
+- Methods: create_draft(), get_draft(), list_drafts_by_user(), append_segment(), pass_ring(), update_draft(), clear_all()
+- Integrated into `service.py` with dual-mode (DB/in-memory) via _use_persistence() check
+- Fixed: timezone import, duplicate ring holder tracking
+- Tests: `backend/tests/test_collab_persistence.py` (9/9 passing)
+
+#### Part 5: Global Idempotency Keys
+- `backend/core/idempotency.py` — Shared idempotency key management
+- Functions: check_and_set(), check_key(), clear_all_keys()
+- Atomic insert-or-fail using IntegrityError handling
+- Works with both PostgreSQL and in-memory fallback
+- Tests: `backend/tests/test_idempotency.py` (8/8 passing)
+
+#### Part 6: Test Infrastructure
+- `backend/conftest.py` — Pytest fixtures for database tests
+- db_url fixture: provides DATABASE_URL to tests
+- reset_db fixture: truncates all tables between tests
+- Enables clean isolation for persistence tests
+
+**Test Coverage:**
+- **35 persistence tests passing** (database foundation, event store, switching, collab, idempotency)
+- **78/80 guardrail tests passing** (2 pre-existing test design issues unrelated to persistence)
+- All tests run with DATABASE_URL set for full integration testing
+
+**Migration Notes:**
+- In-memory stores still present as fallback
+- Services check DATABASE_URL at runtime to enable persistence
+- No API contract changes (fully backward compatible)
+- Analytics API updated to use get_store() instead of EventStore class directly
+
+**Next Steps (Phase 3.6):**
+- Migrate remaining in-memory stores (invites, users)
+- Add database indexes for performance
+- Implement pgvector for user profile embeddings
+- Connection pooling optimization (already using pooled engine)
 
 ---
 

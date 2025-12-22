@@ -17,7 +17,7 @@ class DraftAnalytics(BaseModel):
     draft_id: str = Field(description="UUID")
     views: int = Field(ge=0, description="Number of views (clicks from share)")
     shares: int = Field(ge=0, description="Number of times shared")
-    segments_count: int = Field(ge=1, description="Total segments in draft")
+    segments_count: int = Field(ge=0, description="Total segments in draft (0 allowed)")
     contributors_count: int = Field(ge=1, description="Unique contributors (including creator)")
     ring_passes_count: int = Field(ge=0, description="Total ring passes in lifetime of draft")
     last_activity_at: Optional[datetime] = Field(default=None, description="Most recent activity (segment add, ring pass)")

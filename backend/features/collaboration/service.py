@@ -5,6 +5,7 @@ All operations emit events following .ai/events.md pattern.
 """
 
 import uuid
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict
 import hashlib
@@ -17,10 +18,20 @@ from backend.models.collab import (
     SegmentAppendRequest,
     RingPassRequest,
 )
+from backend.features.collaboration.persistence import DraftPersistence
 
-# In-memory stub store (MUST document as stub for real DB migration)
+# In-memory stub store (fallback when DB not available)
 _drafts_store: Dict[str, CollabDraft] = {}
 _idempotency_keys: set = set()  # Track seen idempotency keys
+
+# Persistence layer selector
+def _use_persistence() -> bool:
+    """Check if we should use DB persistence."""
+    return os.getenv('DATABASE_URL') is not None
+
+def _get_persistence():
+    """Get persistence layer if enabled."""
+    return DraftPersistence() if _use_persistence() else None
 
 
 def emit_event(event_type: str, payload: dict) -> None:
@@ -153,8 +164,12 @@ def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
         updated_at=now,
     )
 
-    # Store
-    _drafts_store[draft_id] = draft
+    # Store (use persistence if available)
+    persistence = _get_persistence()
+    if persistence:
+        persistence.create_draft(draft)
+    else:
+        _drafts_store[draft_id] = draft
 
     # Emit event
     emit_event(
@@ -179,7 +194,12 @@ def get_draft(draft_id: str, compute_metrics_flag: bool = True, now: Optional[da
         compute_metrics_flag: If True, compute and attach metrics
         now: Optional fixed timestamp for deterministic testing
     """
-    draft = _drafts_store.get(draft_id)
+    # Get draft from persistence or in-memory
+    persistence = _get_persistence()
+    if persistence:
+        draft = persistence.get_draft(draft_id)
+    else:
+        draft = _drafts_store.get(draft_id)
     if not draft:
         return None
     
@@ -207,13 +227,17 @@ def get_draft(draft_id: str, compute_metrics_flag: bool = True, now: Optional[da
 
 def list_drafts(user_id: str) -> List[CollabDraft]:
     """List all drafts involving user (as creator or contributor)"""
-    result = []
-    for draft in _drafts_store.values():
-        if draft.creator_id == user_id:
-            result.append(draft)
-        elif any(seg.user_id == user_id for seg in draft.segments):
-            result.append(draft)
-    return result
+    persistence = _get_persistence()
+    if persistence:
+        return persistence.list_drafts_by_user(user_id)
+    else:
+        result = []
+        for draft in _drafts_store.values():
+            if draft.creator_id == user_id:
+                result.append(draft)
+            elif any(seg.user_id == user_id for seg in draft.segments):
+                result.append(draft)
+        return result
 
 
 def append_segment(
@@ -234,9 +258,15 @@ def append_segment(
         )
 
     # Check idempotency
-    if request.idempotency_key in _idempotency_keys:
-        # Idempotent: already appended, return current state
-        return draft
+    persistence = _get_persistence()
+    if persistence:
+        if persistence.check_idempotency(request.idempotency_key):
+            # Idempotent: already appended, return current state
+            return draft
+    else:
+        if request.idempotency_key in _idempotency_keys:
+            # Idempotent: already appended, return current state
+            return draft
 
     # Append segment
     now = datetime.now(timezone.utc)
@@ -270,8 +300,15 @@ def append_segment(
         target_publish_at=draft.target_publish_at,
     )
 
-    _drafts_store[draft_id] = updated_draft
-    _idempotency_keys.add(request.idempotency_key)
+    # Store updated draft
+    if persistence:
+        persistence.append_segment(draft_id, segment)
+        persistence.record_idempotency(request.idempotency_key, scope="collab")
+        # Reload draft to get updated state
+        updated_draft = persistence.get_draft(draft_id)
+    else:
+        _drafts_store[draft_id] = updated_draft
+        _idempotency_keys.add(request.idempotency_key)
 
     # Emit event
     emit_event(
@@ -315,9 +352,15 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
         )
 
     # Check idempotency
-    if request.idempotency_key in _idempotency_keys:
-        # Idempotent: ring already passed (or attempted), return current state
-        return draft
+    persistence = _get_persistence()
+    if persistence:
+        if persistence.check_idempotency(request.idempotency_key):
+            # Idempotent: ring already passed, return current state
+            return draft
+    else:
+        if request.idempotency_key in _idempotency_keys:
+            # Idempotent: ring already passed, return current state
+            return draft
 
     # Pass ring
     now = datetime.now(timezone.utc)
@@ -343,8 +386,17 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
         target_publish_at=draft.target_publish_at,
     )
 
-    _drafts_store[draft_id] = updated_draft
-    _idempotency_keys.add(request.idempotency_key)
+    # Store updated draft and ring pass
+    if persistence:
+        persistence.pass_ring(draft_id, from_user_id, request.to_user_id, now)
+        persistence.record_idempotency(request.idempotency_key, scope="collab")
+        # Update draft in DB
+        persistence.update_draft(updated_draft)
+        # Reload draft to get updated state
+        updated_draft = persistence.get_draft(draft_id)
+    else:
+        _drafts_store[draft_id] = updated_draft
+        _idempotency_keys.add(request.idempotency_key)
 
     # Emit event
     emit_event(
@@ -376,10 +428,16 @@ def generate_share_card(draft_id: str, now: Optional[datetime] = None) -> dict:
     """
     from backend.models.sharecard_collab import CollabShareCard, ShareCardMetrics, ShareCardCTA, ShareCardTheme
     
-    if draft_id not in _drafts_store:
-        raise ValueError(f"Draft {draft_id} not found")
-    
-    draft = _drafts_store[draft_id]
+    # Get draft from persistence or in-memory
+    persistence = _get_persistence()
+    if persistence:
+        draft = persistence.get_draft(draft_id)
+        if not draft:
+            raise ValueError(f"Draft {draft_id} not found")
+    else:
+        if draft_id not in _drafts_store:
+            raise ValueError(f"Draft {draft_id} not found")
+        draft = _drafts_store[draft_id]
     if now is None:
         now = datetime.now(timezone.utc)
     
@@ -438,5 +496,8 @@ def generate_share_card(draft_id: str, now: Optional[datetime] = None) -> dict:
 def clear_store() -> None:
     """Clear all data (testing only)"""
     global _drafts_store, _idempotency_keys
+    persistence = _get_persistence()
+    if persistence:
+        persistence.clear_all()
     _drafts_store.clear()
     _idempotency_keys.clear()

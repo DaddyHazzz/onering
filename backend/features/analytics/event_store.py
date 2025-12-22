@@ -213,3 +213,71 @@ def generate_idempotency_key(event_type: str, **kwargs) -> str:
     for key in sorted(kwargs.keys()):
         parts.append(f"{key}={kwargs[key]}")
     return ":".join(parts)
+
+
+# ============================================================================
+# PHASE 3.5: Smart Store Selection
+# ============================================================================
+
+def get_event_store():
+    """
+    Get the appropriate event store implementation.
+    
+    Phase 3.5 behavior:
+    - Defaults to PostgreSQL if DATABASE_URL is configured
+    - Falls back to in-memory if database is unavailable
+    - Reducers and API are agnostic to implementation
+    
+    Returns:
+        EventStore or PostgresEventStore instance
+    """
+    import os
+    
+    # Check DATABASE_URL directly from environment (not cached settings)
+    database_url = os.getenv("DATABASE_URL")
+    
+    # Check if DATABASE_URL is configured
+    if database_url:
+        try:
+            # Try to import and use PostgreSQL store
+            from backend.features.analytics.event_store_pg import PostgresEventStore
+            from backend.core.database import check_connection
+            
+            # Verify database is accessible
+            if check_connection():
+                return PostgresEventStore()
+            else:
+                print("[event_store] PostgreSQL unavailable, falling back to in-memory")
+                
+        except Exception as e:
+            print(f"[event_store] Failed to initialize PostgreSQL store: {e}")
+            print("[event_store] Falling back to in-memory")
+    
+    # Fallback to in-memory
+    return EventStore()
+
+
+# Global store instance (lazy initialization)
+_store_instance = None
+
+
+def get_store():
+    """
+    Get the singleton event store instance.
+    
+    This is the primary API that all consumers should use.
+    """
+    global _store_instance
+    if _store_instance is None:
+        _store_instance = get_event_store()
+    return _store_instance
+
+
+def reset_store():
+    """
+    Reset the store instance.
+    
+    FOR TESTING ONLY - forces re-initialization on next get_store() call.
+    """
+    global _store_instance
+    _store_instance = None
