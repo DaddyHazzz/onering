@@ -5,7 +5,7 @@ Event-driven analytics endpoints (Phase 3.4).
 Pure event-reducer architecture: Events → Reducers → Read Models → API.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
@@ -16,6 +16,7 @@ from backend.features.analytics.reducers import (
     reduce_user_analytics,
     reduce_leaderboard,
 )
+from backend.core.errors import ValidationError, AppError
 
 router = APIRouter()
 
@@ -85,9 +86,9 @@ def get_draft_analytics(
             "data": analytics.model_dump(mode="json"),
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise ValidationError(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+        raise AppError("Internal error while computing draft analytics")
 
 
 @router.get("/v1/analytics/leaderboard", response_model=Dict[str, Any])
@@ -114,10 +115,7 @@ def get_analytics_leaderboard(
         # Validate metric type
         valid_metrics = ["collaboration", "momentum", "consistency"]
         if metric not in valid_metrics:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid metric type. Must be one of: {', '.join(valid_metrics)}",
-            )
+            raise ValidationError(f"Invalid metric type. Must be one of: {', '.join(valid_metrics)}")
         
         # Parse optional fixed timestamp for deterministic testing
         now_dt = None
@@ -136,8 +134,8 @@ def get_analytics_leaderboard(
             "data": leaderboard.model_dump(mode="json"),
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
+        raise ValidationError(str(e))
+    except AppError:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+        raise AppError("Internal error while computing leaderboard")

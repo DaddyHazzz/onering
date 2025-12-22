@@ -14,6 +14,7 @@ from backend.models.analytics import (
     LeaderboardResponse,
 )
 from backend.features.analytics.event_store import Event
+from backend.core.errors import ValidationError
 
 
 def reduce_draft_analytics(
@@ -40,6 +41,9 @@ def reduce_draft_analytics(
         now = now.replace(tzinfo=timezone.utc)
     
     # Filter events for this draft
+    for e in events:
+        if getattr(e, "schema_version", 1) != 1:
+            raise ValidationError("Unsupported analytics event schema version")
     draft_events = [e for e in events if e.data.get("draft_id") == draft_id]
     
     # Count views (unique DraftViewed events)
@@ -113,6 +117,9 @@ def reduce_user_analytics(
         now = now.replace(tzinfo=timezone.utc)
     
     # Drafts created (DraftCreated events by this user)
+    for e in events:
+        if getattr(e, "schema_version", 1) != 1:
+            raise ValidationError("Unsupported analytics event schema version")
     created_events = [
         e for e in events
         if e.event_type == "DraftCreated" and e.data.get("creator_id") == user_id
@@ -196,6 +203,9 @@ def reduce_leaderboard(
         now = now.replace(tzinfo=timezone.utc)
     
     # Get all unique user IDs from events
+    for e in events:
+        if getattr(e, "schema_version", 1) != 1:
+            raise ValidationError("Unsupported analytics event schema version")
     user_ids: Set[str] = set()
     for e in events:
         if e.event_type == "DraftCreated":

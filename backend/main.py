@@ -24,7 +24,15 @@ sys.path.insert(0, parent_dir)
 # Import after dotenv is loaded
 try:
     from backend.core.config import settings
-    from backend.core.logging import configure_logging
+    from backend.core.logging import configure_logging, RequestIdMiddleware
+    from backend.core.validation import validate_env
+    from backend.core.errors import (
+        AppError,
+        app_error_handler,
+        http_error_handler,
+        unhandled_exception_handler,
+    )
+    from backend.core.rate_limit import RateLimitMiddleware, build_rate_limit_config
     from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health
     from backend.agents.viral_thread import generate_viral_thread
     import groq
@@ -39,7 +47,8 @@ except ImportError as e:
     traceback.print_exc()
     sys.exit(1)
 
-configure_logging()
+configure_logging(settings.ENV)
+validate_env()
 
 from contextlib import asynccontextmanager
 
@@ -58,16 +67,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="OneRing - Backend (dev)", lifespan=lifespan)
 
+# Middlewares
+app.add_middleware(RequestIdMiddleware)
+app.add_middleware(RateLimitMiddleware, limits=build_rate_limit_config())
+
 
 def strip_numbering_line(text: str) -> str:
     """Remove any leading numbering or bullets from a single line."""
     return re.sub(r"^\s*(?:\d+(?:/\d+)?[.):\-\]]*\s*|(?:Tweet\s+)?\d+\s*[-:).]?\s*|[-•*]+\s*)", "", text).lstrip()
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    logger = logging.getLogger("onering")
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return {"error": str(exc)}
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(HTTPException, http_error_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # CORS (adjust origins in production)
 app.add_middleware(
@@ -81,6 +92,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+# Legacy alias to support direct /v1/analytics/* paths used in tests/clients
+app.include_router(analytics.router, tags=["analytics-legacy"])
 app.include_router(streaks.router, tags=["streaks"])
 app.include_router(challenges.router, tags=["challenges"])
 app.include_router(coach.router, tags=["coach"])

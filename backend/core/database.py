@@ -61,7 +61,7 @@ def init_engine(database_url: Optional[str] = None):
             "DATABASE_URL is not configured. "
             "Set DATABASE_URL in environment or .env file."
         )
-    
+
     # Create engine with connection pooling
     _engine = create_engine(
         url,
@@ -188,6 +188,17 @@ def check_connection() -> bool:
 
 
 # Table definitions will be added here as we migrate features
+
+# Users table (Phase 4.0)
+users = Table(
+    'app_users',
+    metadata,
+    Column('user_id', String(100), primary_key=True),
+    Column('display_name', Text, nullable=True),
+    Column('status', String(50), nullable=False, server_default='active'),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Index('idx_users_created_at', 'created_at'),
+)
 
 # Analytics events table (for Phase 3.5)
 analytics_events = Table(

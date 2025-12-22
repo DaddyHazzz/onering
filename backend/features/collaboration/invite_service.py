@@ -243,6 +243,13 @@ def accept_invite(
         _invite_idempotency_keys.add(request.idempotency_key)
         return invite
 
+    # Ensure user exists in User domain
+    try:
+        from backend.features.users.service import get_or_create_user
+        get_or_create_user(user_id)
+    except Exception:
+        pass
+
     # Accept the invite
     accepted_invite = CollaborationInvite(
         invite_id=invite.invite_id,

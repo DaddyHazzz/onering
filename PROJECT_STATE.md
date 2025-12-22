@@ -1,8 +1,8 @@
 # OneRing — Project State (Canonical)
 
 **Last Updated:** December 22, 2025  
-**Status:** Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
-**Test Coverage:** Backend: 334/334 tests passing (100%); Frontend: 298 tests passing (100%)
+**Status:** Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
+**Test Coverage:** Backend: 353/353 tests passing (100%); Frontend: 298 tests passing (100%)
 
 ---
 
@@ -49,6 +49,66 @@ OneRing is a creator-first collaboration platform centered around a daily pull l
 - Deterministic tests (fixed timestamps) prevent flakiness
 - Safety tests explicitly verify no secret leakage
 - Bounds tests ensure metrics stay within expected ranges
+
+---
+
+## Phase 4: Platform Capabilities & Scale Foundations
+
+Status: Phase 4.0 COMPLETE (Foundations)
+
+What Phase 4 Is:
+- Multi-user scale correctness and explicit domain boundaries
+- Extensibility without feature bloat; boring stability first
+- Preparing for revenue features later (no payments now)
+
+What Phase 4 Is NOT:
+- No monetization yet, no blockchain, no tokens
+- No WebSockets or real-time transports
+- No LLM scoring or ranking
+- No breaking API changes without a compatibility layer
+
+Principles Carried Forward:
+- Determinism is mandatory; reducers remain pure
+- Tests precede claims; stability over novelty
+- Compatibility layers for any behavioral surface change
+
+### Phase 4.0 — Platform Foundations (✅ COMPLETE)
+
+**What Was Built:**
+- **User Domain**: Created app_users table (avoiding legacy conflicts), User model with deterministic display name normalization (@u_<hash>), and user service with get_or_create_user
+- **Collaboration Roles**: Extended draft_collaborators with role column (owner/collaborator), enforced append_segment guardrails (must be owner/collaborator AND ring holder)
+- **Event Schema Versioning**: All events include schema_version=1; reducers explicitly validate and reject unknown versions with ValidationError
+- **Read Model Snapshots**: Implemented in-memory snapshot writer for draft analytics and leaderboard; snapshots optional and never source of truth
+- **Integration Audit**: Ensured get_or_create_user called at all entry points (create_draft, append_segment, pass_ring, accept_invite)
+
+**Files Added:**
+- `backend/models/user.py` — Frozen User model
+- `backend/features/users/service.py` — User domain operations
+- `backend/features/analytics/snapshots.py` — Optional snapshot writer
+- `backend/tests/test_user_domain.py` — User service tests
+- `backend/tests/test_collab_roles.py` — Role enforcement tests
+- `backend/tests/test_event_schema_versioning.py` — Schema validation tests
+- `backend/tests/test_snapshots.py` — Snapshot correctness tests
+- `PHASE4_0_FOUNDATIONS.md` — Session scope document
+
+**Files Modified:**
+- `backend/core/database.py` — Added app_users table
+- `backend/features/collaboration/persistence.py` — Role support in add_collaborator, list_collaborators
+- `backend/features/collaboration/service.py` — User existence checks, role guardrails
+- `backend/features/collaboration/invite_service.py` — User existence check in accept_invite
+- `backend/features/analytics/event_store.py` — schema_version=1 default
+- `backend/features/analytics/reducers.py` — Schema version validation in all reducers
+
+**Test Results:** 353/353 backend tests passing (100%)
+
+**What Was NOT Built:**
+- No monetization (Phase 4.1+)
+- No role UX changes (API only)
+- No WebSockets or real-time features
+- No LLM ranking or scoring
+- No breaking API changes
+
+---
 
 ---
 

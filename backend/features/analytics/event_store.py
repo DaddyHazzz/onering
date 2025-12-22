@@ -18,6 +18,7 @@ class Event(BaseModel):
     event_type: str
     timestamp: datetime
     data: Dict[str, Any]
+    schema_version: int = 1
 
 
 class DraftCreatedEvent(BaseModel):
@@ -189,7 +190,8 @@ def create_event(
     return Event(
         event_type=event_type,
         timestamp=now,
-        data=data
+        data=data,
+        schema_version=1,
     )
 
 

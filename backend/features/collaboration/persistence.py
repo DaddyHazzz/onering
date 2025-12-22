@@ -411,7 +411,7 @@ class DraftPersistence:
             return False
     
     @staticmethod
-    def add_collaborator(draft_id: str, user_id: str) -> bool:
+    def add_collaborator(draft_id: str, user_id: str, role: str = 'collaborator') -> bool:
         """
         Add user as collaborator to draft (idempotent).
         
@@ -427,7 +427,7 @@ class DraftPersistence:
                 collab_row = {
                     'draft_id': draft_id,
                     'user_id': user_id,
-                    'role': 'collaborator',
+                    'role': role,
                 }
                 session.execute(insert(draft_collaborators).values(**collab_row))
                 session.commit()
@@ -454,3 +454,14 @@ class DraftPersistence:
                 idempotency_keys.delete().where(idempotency_keys.c.scope == "collab")
             )
             session.commit()
+
+    @staticmethod
+    def list_collaborators(draft_id: str):
+        """Return list of tuples (user_id, role) for a draft."""
+        with get_db_session() as session:
+            result = session.execute(
+                select(draft_collaborators.c.user_id, draft_collaborators.c.role).where(
+                    draft_collaborators.c.draft_id == draft_id
+                )
+            ).all()
+            return [(row.user_id, row.role) for row in result]

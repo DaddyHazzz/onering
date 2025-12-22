@@ -19,6 +19,7 @@ from backend.models.collab import (
     RingPassRequest,
 )
 from backend.features.collaboration.persistence import DraftPersistence
+from backend.core.errors import NotFoundError, PermissionError, ValidationError
 
 # In-memory stub store (fallback when DB not available)
 _drafts_store: Dict[str, CollabDraft] = {}
@@ -122,6 +123,12 @@ def compute_metrics(
 
 def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
     """Create new collaboration draft"""
+    # Ensure user exists in User domain
+    try:
+        from backend.features.users.service import get_or_create_user
+        get_or_create_user(user_id)
+    except Exception:
+        pass
     draft_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
@@ -249,9 +256,15 @@ def append_segment(
     """
     draft = get_draft(draft_id)
     if not draft:
-        raise ValueError(f"Draft {draft_id} not found")
+        raise NotFoundError(f"Draft {draft_id} not found")
 
-    # Check ring holder
+    # Check role: must be owner or collaborator
+    is_collaborator = (user_id == draft.creator_id) or (user_id in draft.collaborators)
+    if not is_collaborator:
+        raise PermissionError(
+            f"User {user_id} is not owner/collaborator for draft {draft_id}"
+        )
+    # Ring holder rule remains: only current holder can append
     if draft.ring_state.current_holder_id != user_id:
         raise PermissionError(
             f"User {user_id} is not ring holder for draft {draft_id}"
@@ -270,6 +283,12 @@ def append_segment(
 
     # Append segment
     now = datetime.now(timezone.utc)
+    # Ensure user exists in User domain
+    try:
+        from backend.features.users.service import get_or_create_user
+        get_or_create_user(user_id)
+    except Exception:
+        pass
     ring_holder_id = draft.ring_state.current_holder_id
     segment = DraftSegment(
         segment_id=str(uuid.uuid4()),
@@ -333,7 +352,7 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
     """
     draft = get_draft(draft_id)
     if not draft:
-        raise ValueError(f"Draft {draft_id} not found")
+        raise NotFoundError(f"Draft {draft_id} not found")
 
     # Check ownership
     if draft.ring_state.current_holder_id != from_user_id:
@@ -350,6 +369,14 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
         raise PermissionError(
             f"Cannot pass ring to {request.to_user_id} (not owner or collaborator)"
         )
+
+    # Ensure both users exist in User domain
+    try:
+        from backend.features.users.service import get_or_create_user
+        get_or_create_user(from_user_id)
+        get_or_create_user(request.to_user_id)
+    except Exception:
+        pass
 
     # Check idempotency
     persistence = _get_persistence()
@@ -433,10 +460,10 @@ def generate_share_card(draft_id: str, now: Optional[datetime] = None) -> dict:
     if persistence:
         draft = persistence.get_draft(draft_id)
         if not draft:
-            raise ValueError(f"Draft {draft_id} not found")
+            raise NotFoundError(f"Draft {draft_id} not found")
     else:
         if draft_id not in _drafts_store:
-            raise ValueError(f"Draft {draft_id} not found")
+            raise NotFoundError(f"Draft {draft_id} not found")
         draft = _drafts_store[draft_id]
     if now is None:
         now = datetime.now(timezone.utc)

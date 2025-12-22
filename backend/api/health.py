@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import text
 
 from backend.core.database import get_db_session, check_connection
+from backend.core.logging import latency_bucket_ms, get_request_id
 
 logger = logging.getLogger("onering")
 
@@ -64,6 +65,8 @@ async def health_db(now: Optional[str] = Query(None)):
             tables_present=[]
         )
         
+        latency_bucket = latency_bucket_ms(latency_ms if now is None else None)
+
         if is_connected:
             # List tables that exist
             try:
@@ -83,7 +86,16 @@ async def health_db(now: Optional[str] = Query(None)):
         
         # Compute timestamp (use provided 'now' for determinism in tests)
         timestamp = now or datetime.now(timezone.utc).isoformat()
-        
+
+        logger.info(
+            "health.db",
+            extra={
+                "request_id": get_request_id(),
+                "ok": is_connected,
+                "latency_bucket": latency_bucket,
+            },
+        )
+
         return HealthResponse(
             ok=is_connected,
             db=db_health,
@@ -91,7 +103,10 @@ async def health_db(now: Optional[str] = Query(None)):
         )
     
     except Exception as e:
-        logger.error(f"[health/db] Error: {e}")
+        logger.error(
+            f"[health/db] Error: {e}",
+            extra={"request_id": get_request_id()},
+        )
         # Return error without exposing details
         return HealthResponse(
             ok=False,

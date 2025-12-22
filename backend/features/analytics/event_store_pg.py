@@ -103,7 +103,8 @@ class PostgresEventStore:
                 event = Event(
                     event_type=row.event_type,
                     timestamp=row.occurred_at,
-                    data=dict(row.payload) if row.payload else {}
+                    data=dict(row.payload) if row.payload else {},
+                    schema_version=1,
                 )
                 events.append(event)
             
