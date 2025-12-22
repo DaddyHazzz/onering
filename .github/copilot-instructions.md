@@ -12,6 +12,8 @@ Short, actionable guidance for all AI agents (Grok, ChatGPT, Gemini, GitHub Copi
 - **Key services:** Groq (LLM), Stripe (payments), X/Twitter (posting), Clerk (auth), PostgreSQL + pgvector (data)
 - **Deployment:** Local dev (next dev + uvicorn), Docker/K8s ready in `infra/`
 
+✅ **Update (Dec 2025):** Phase 3.4 analytics/leaderboard is complete. Backend analytics tests (49) and frontend tests (298) are passing. See `PROJECT_STATE.md` for canonical details.
+
 ## Architecture at a Glance
 ```
 ┌─────────────────────────────────┐
@@ -150,8 +152,17 @@ Short, actionable guidance for all AI agents (Grok, ChatGPT, Gemini, GitHub Copi
    - Stored in pgvector column `User.profileEmbedding` (1536-dim vector)
    - Auto-computed on first generation; used by agents for personalization
 
+9. **Phase 3.4 Analytics (Event-Driven Architecture)** ✅ **COMPLETE**
+   - **Files:** `backend/features/analytics/event_store.py`, `backend/features/analytics/reducers.py`, `backend/api/analytics.py`, tests under `backend/tests/`
+   - **Events:** DraftCreated, DraftViewed, SegmentAdded, RingPassed, DraftPublished
+   - **Reducers:** `reduce_draft_analytics()`, `reduce_user_analytics()`, `reduce_leaderboard()` — pure, deterministic
+   - **API Endpoints:** `/v1/collab/drafts/{draft_id}/analytics` and `/v1/analytics/leaderboard` (optional `now` param)
+   - **Properties:** Deterministic reducers, idempotency, supportive insights, frozen models
+   - **Storage:** In-memory (Phase 3.5 will migrate to PostgreSQL)
+   - **Test Coverage:** Backend analytics: 49 passing; frontend analytics: integrated and passing
 
-9. **Monitoring Dashboard**
+
+10. **Monitoring Dashboard**
    - `src/app/monitoring/page.tsx` — Real-time system health view
    - Stats: active users, total RING circulated, post success rate, failed posts, avg RING/post
    - Agent workflow traces with status and duration

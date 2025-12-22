@@ -25,7 +25,7 @@ sys.path.insert(0, parent_dir)
 try:
     from backend.core.config import settings
     from backend.core.logging import configure_logging
-    from backend.api import auth, posts, analytics
+    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites
     from backend.agents.viral_thread import generate_viral_thread
     import groq
     from redis import Redis
@@ -81,6 +81,15 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(streaks.router, tags=["streaks"])
+app.include_router(challenges.router, tags=["challenges"])
+app.include_router(coach.router, tags=["coach"])
+app.include_router(momentum.router, tags=["momentum"])
+app.include_router(profile.router, tags=["profile"])
+app.include_router(sharecard.router, prefix="/v1", tags=["sharecard"])
+app.include_router(collaboration.router, tags=["collaboration"])
+app.include_router(collaboration_invites.router, tags=["collaboration-invites"])
+app.include_router(archetypes.router, tags=["archetypes"])
 
 @app.get("/healthz")
 def health():

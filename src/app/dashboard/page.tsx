@@ -3,6 +3,7 @@
 import { UserButton, useUser } from "@clerk/nextjs";
 import { useState, useEffect } from "react";
 import { loadStripe } from "@stripe/stripe-js";
+import ArchetypeCard from "@/components/ArchetypeCard";
 
 // Make sure this is the publishable key (the pk_test_ one)
 const stripePromise = loadStripe(
@@ -37,6 +38,95 @@ export default function Dashboard() {
   const [topicForThread, setTopicForThread] = useState("");
   const [threadLines, setThreadLines] = useState<string[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [streak, setStreak] = useState<{ current_length: number; longest_length: number; status: string; next_action_hint: string } | null>(null);
+  const [loadingStreak, setLoadingStreak] = useState(false);
+  const [challenge, setChallenge] = useState<{ challenge_id: string; date: string; type: string; prompt: string; status: string; next_action_hint: string } | null>(null);
+  const [loadingChallenge, setLoadingChallenge] = useState(false);
+
+  const refreshStreak = async () => {
+    if (!user?.id) return;
+    setLoadingStreak(true);
+    try {
+      const res = await fetch("/api/streaks/current", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) {
+        setStreak(data);
+      }
+    } catch (err) {
+      console.error("[dashboard] streak fetch failed", err);
+    } finally {
+      setLoadingStreak(false);
+    }
+  };
+
+  const refreshChallenge = async () => {
+    if (!user?.id) return;
+    setLoadingChallenge(true);
+    try {
+      const res = await fetch("/api/challenges/today", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) {
+        setChallenge(data);
+      }
+    } catch (err) {
+      console.error("[dashboard] challenge fetch failed", err);
+    } finally {
+      setLoadingChallenge(false);
+    }
+  };
+
+  const handleAcceptChallenge = async () => {
+    if (!challenge) return;
+    setLoadingChallenge(true);
+    try {
+      const res = await fetch("/api/challenges/today/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_id: challenge.challenge_id }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await refreshChallenge();
+      } else {
+        alert(data.error || "Failed to accept challenge");
+      }
+    } catch (err) {
+      console.error("[dashboard] accept challenge failed", err);
+      alert("Failed to accept challenge");
+    } finally {
+      setLoadingChallenge(false);
+    }
+  };
+
+  const handleCompleteChallenge = async () => {
+    if (!challenge) return;
+    setLoadingChallenge(true);
+    try {
+      const res = await fetch("/api/challenges/today/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_id: challenge.challenge_id }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await refreshChallenge();
+        await refreshStreak(); // Refresh streak in case it was incremented
+        alert(data.next_action_hint || "Challenge completed!");
+      } else {
+        alert(data.error || "Failed to complete challenge");
+      }
+    } catch (err) {
+      console.error("[dashboard] complete challenge failed", err);
+      alert("Failed to complete challenge");
+    } finally {
+      setLoadingChallenge(false);
+    }
+  };
+
+  const protectionStride = 7;
+  const streakLength = streak?.current_length ?? 0;
+  const strideProgressRaw = streakLength === 0 ? 0 : streakLength % protectionStride || protectionStride;
+  const strideProgress = Math.min(1, strideProgressRaw / protectionStride);
 
   useEffect(() => {
     // initialize ring from Clerk metadata
@@ -76,6 +166,18 @@ export default function Dashboard() {
     };
     if (user?.id) {
       claimDailyBonus();
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      refreshStreak();
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      refreshChallenge();
     }
   }, [user?.id]);
 
@@ -221,6 +323,11 @@ export default function Dashboard() {
             <div className="flex items-center gap-6">
                 <h1 className="text-6xl font-black">OneRing</h1>
                 <div className="ml-4 px-4 py-2 bg-yellow-300 text-black rounded-lg font-bold">RING: {ring}</div>
+                {streak && (
+                  <div className="ml-2 px-4 py-2 bg-orange-400 text-black rounded-lg font-bold">
+                    🔥 {streak.current_length} day streak
+                  </div>
+                )}
               </div>
             <div className="flex items-center gap-4">
               <button onClick={async () => {
@@ -235,6 +342,11 @@ export default function Dashboard() {
               <UserButton afterSignOutUrl="/" />
             </div>
           </div>
+
+        {/* ==== ARCHETYPE CARD ==== */}
+        <div className="mb-8">
+          <ArchetypeCard />
+        </div>
 
         {/* ==== BLUE CHECK BUTTON ==== */}
         {!(user?.publicMetadata as UserPublicMetadata)?.verified && (
@@ -316,6 +428,7 @@ export default function Dashboard() {
                     if (data.success) {
                       setRing((r) => r + 50);
                       setHistory((h) => [{ platform: 'X', content: result, time: new Date().toISOString() }, ...h].slice(0,5));
+                      await refreshStreak();
                       alert(`Posted! ${data.url}`);
                     } else {
                       alert(`Error: ${data.error}`);
@@ -433,6 +546,7 @@ export default function Dashboard() {
                       setRing((r) => r + 50);
                       setThreadLines([]);
                       setTopicForThread("");
+                      await refreshStreak();
                       alert(`Posted! ${data.url}`);
                     } else {
                       alert(`Error: ${data.error}`);
@@ -458,6 +572,67 @@ export default function Dashboard() {
         <p className="text-center mt-20 text-xl opacity-70">
           Welcome back, {user?.firstName || "King"}
         </p>
+
+        {/* ==== STREAK MOTIVATION ==== */}
+        {streak && (
+          <div className="mt-8 bg-gradient-to-r from-orange-600/20 to-red-600/20 backdrop-blur-xl rounded-3xl p-8 border border-orange-500/50 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-4xl font-black mb-2">You're on a {streak.current_length}-day streak 🔥</h3>
+                <p className="text-lg text-white/80 mb-4">{streak.next_action_hint}</p>
+                <div className="w-full max-w-md bg-white/10 rounded-full h-4 border border-orange-500/50 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-orange-500 to-red-500 h-full transition-all duration-300"
+                    style={{ width: `${strideProgress * 100}%` }}
+                  />
+                </div>
+                <p className="text-sm text-white/60 mt-2">{strideProgressRaw} / {protectionStride} days to protection window</p>
+              </div>
+              <div className="text-7xl">{streak.status === "grace" ? "🛡️" : streak.status === "decayed" ? "📉" : "🚀"}</div>
+            </div>
+          </div>
+        )}
+
+        {/* ==== TODAY'S CHALLENGE ==== */}
+        {challenge && (
+          <div className="mt-8 bg-gradient-to-r from-purple-600/20 to-blue-600/20 backdrop-blur-xl rounded-3xl p-8 border border-purple-500/50 shadow-2xl">
+            <h3 className="text-3xl font-black mb-4">Today's Challenge 🎯</h3>
+            <div className="mb-4">
+              <span className="inline-block px-3 py-1 bg-purple-500/30 rounded-full text-sm font-bold mr-2">
+                {challenge.type}
+              </span>
+              <span className="text-white/60 text-sm">{challenge.date}</span>
+            </div>
+            <p className="text-xl text-white/90 mb-6">{challenge.prompt}</p>
+            <div className="flex items-center gap-4">
+              {challenge.status === "assigned" && (
+                <button
+                  onClick={handleAcceptChallenge}
+                  disabled={loadingChallenge}
+                  className="px-8 py-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-xl font-bold"
+                >
+                  {loadingChallenge ? "..." : "Accept Challenge"}
+                </button>
+              )}
+              {challenge.status === "accepted" && (
+                <button
+                  onClick={handleCompleteChallenge}
+                  disabled={loadingChallenge}
+                  className="px-8 py-3 bg-green-600 hover:bg-green-500 disabled:opacity-50 rounded-xl font-bold"
+                >
+                  {loadingChallenge ? "..." : "Mark Complete"}
+                </button>
+              )}
+              {challenge.status === "completed" && (
+                <div className="text-lg font-bold text-green-400">✓ Nice. You showed up today.</div>
+              )}
+              {challenge.status === "expired" && (
+                <div className="text-lg text-white/60">A new challenge awaits tomorrow.</div>
+              )}
+            </div>
+            <p className="text-sm text-white/60 mt-4">{challenge.next_action_hint}</p>
+          </div>
+        )}
 
         {/* RING Spending Actions */}
         <div className="mt-8 bg-white/5 p-6 rounded-2xl border border-white/10">

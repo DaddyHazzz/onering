@@ -1,4 +1,4 @@
-# OneRing — Agentic Content Generation & Multi-Platform Posting
+﻿# OneRing � Agentic Content Generation & Multi-Platform Posting
 
 **OneRing** is a full-stack agentic content system that generates viral social media content, posts across multiple platforms (X, Instagram, TikTok, YouTube), and rewards creators with a native RING token. Built with Next.js 16, FastAPI, LangGraph, and Stripe.
 
@@ -22,6 +22,9 @@
 6. [API Reference](#api-reference)
 7. [Environment Variables](#environment-variables)
 8. [Troubleshooting](#troubleshooting)
+9. [Product Vision](#product-vision)
+10. [Roadmap](#roadmap)
+11. [Extending the System Safely](#extending-the-system-safely)
 
 ---
 
@@ -97,7 +100,7 @@ rq worker -u redis://localhost:6379 default
 stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
 - Performs health checks every 30 seconds
-- Uses exponential backoff for retries (1s → 2s → 4s → 8s → 16s)
+- Uses exponential backoff for retries (1s ? 2s ? 4s ? 8s ? 16s)
 
 **Why not run `uvicorn main:app` directly?**
 - Running from project root fails: Python can't find the `main` module
@@ -145,27 +148,27 @@ Copy the `STRIPE_WEBHOOK_SECRET` and add it to `.env.local`.
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────┐
-│     Frontend (Next.js 16 App Router)    │
-│  src/app, Tailwind, Clerk Auth          │
-└────────────────┬────────────────────────┘
-                 │ HTTP REST API
-                 │ /api/generate (streaming)
-                 │ /api/post-to-x (posting)
-                 │ /api/stripe/* (payments)
-                 │ /api/monitoring/stats
-                 ▼
-┌─────────────────────────────────────────┐
-│   FastAPI Backend (localhost:8000)      │
-│  - /v1/generate/content/ (streaming)    │
-│  - LangGraph agents (Writer, Strategy,  │
-│    Research, Posting, Analytics)        │
-│  - RQ job queue (posting, video)        │
-│  - Redis rate-limiting & cache          │
-└────────────┬────────────────────────────┘
-             │
-    ┌────────┴──────────┬──────────────┐
-    ▼                   ▼              ▼
++-----------------------------------------+
+�     Frontend (Next.js 16 App Router)    �
+�  src/app, Tailwind, Clerk Auth          �
++-----------------------------------------+
+                 � HTTP REST API
+                 � /api/generate (streaming)
+                 � /api/post-to-x (posting)
+                 � /api/stripe/* (payments)
+                 � /api/monitoring/stats
+                 ?
++-----------------------------------------+
+�   FastAPI Backend (localhost:8000)      �
+�  - /v1/generate/content/ (streaming)    �
+�  - LangGraph agents (Writer, Strategy,  �
+�    Research, Posting, Analytics)        �
+�  - RQ job queue (posting, video)        �
+�  - Redis rate-limiting & cache          �
++-----------------------------------------+
+             �
+    +----------------------------------+
+    ?                   ?              ?
 Groq LLM      Social Platform APIs   PostgreSQL
 (streaming)   X, IG, TikTok,         + pgvector
               YouTube                (embeddings)
@@ -174,22 +177,22 @@ Temporal (optional): `backend/workflows/content_workflow.py` is scaffolded for d
 ```
 
 ### Frontend Components
-- **`src/app/layout.tsx`** — Clerk auth wrapper + global routing
-- **`src/app/dashboard/page.tsx`** — Main dashboard (tabs: Generate, Post, Schedule, Leaderboard)
-- **`src/app/monitoring/page.tsx`** — Real-time system health dashboard
-- **`src/app/api/generate/route.ts`** — Streams Groq tokens from FastAPI
-- **`src/app/api/post-to-x/route.ts`** — Posts threads to X, rate-limits, awards RING
-- **`src/app/api/post-to-ig/route.ts`** — Instagram posting (Graph API ready)
-- **`src/app/api/stripe/{checkout,webhook}/route.ts`** — Payment flows
+- **`src/app/layout.tsx`** � Clerk auth wrapper + global routing
+- **`src/app/dashboard/page.tsx`** � Main dashboard (tabs: Generate, Post, Schedule, Leaderboard)
+- **`src/app/monitoring/page.tsx`** � Real-time system health dashboard
+- **`src/app/api/generate/route.ts`** � Streams Groq tokens from FastAPI
+- **`src/app/api/post-to-x/route.ts`** � Posts threads to X, rate-limits, awards RING
+- **`src/app/api/post-to-ig/route.ts`** � Instagram posting (Graph API ready)
+- **`src/app/api/stripe/{checkout,webhook}/route.ts`** � Payment flows
 
 ### Backend Services
-- **`backend/main.py`** — FastAPI app + `/v1/generate/content/` endpoint
-- **`backend/agents/langgraph/graph.py`** — Multi-agent orchestration (Writer → Strategy → Research → Posting → Analytics)
-- **`backend/agents/writer_agent.py`** — Groq-powered content generation
-- **`backend/agents/posting_agent.py`** — Platform-specific formatting + routing
-- **`backend/workers/queue.py`** — RQ job enqueueing
-- **`backend/workers/worker.py`** — RQ worker process
-- **`backend/models/`** — Prisma-managed database schemas
+- **`backend/main.py`** � FastAPI app + `/v1/generate/content/` endpoint
+- **`backend/agents/langgraph/graph.py`** � Multi-agent orchestration (Writer ? Strategy ? Research ? Posting ? Analytics)
+- **`backend/agents/writer_agent.py`** � Groq-powered content generation
+- **`backend/agents/posting_agent.py`** � Platform-specific formatting + routing
+- **`backend/workers/queue.py`** � RQ job enqueueing
+- **`backend/workers/worker.py`** � RQ worker process
+- **`backend/models/`** � Prisma-managed database schemas
 
 ### Key Design Decisions
 See [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) for architecture decisions, service choices, and constraints.
@@ -198,88 +201,117 @@ See [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) for architecture decisions, servi
 
 ## Features
 
-### ✅ Content Generation
-- **Groq-powered streaming** — Real-time token streaming from Groq's llama-3.1-8b-instant model
-- **LangGraph orchestration** — Multi-step workflow (Writer → Strategy → Research) for rich context
-- **User personalization** — Embeddings-based (pgvector) content tailoring based on user profile
+### ? Content Generation
+- **Groq-powered streaming** � Real-time token streaming from Groq's llama-3.1-8b-instant model
+- **LangGraph orchestration** � Multi-step workflow (Writer ? Strategy ? Research) for rich context
+- **User personalization** � Embeddings-based (pgvector) content tailoring based on user profile
 
-### ✅ Multi-Platform Posting
-- **X (Twitter)** — Thread posting, reply chaining, real-time metrics, rate-limiting (5 posts/15 mins)
-- **Instagram** — Mock integration, ready for Meta Graph API
-- **TikTok & YouTube** — Stub APIs, backend workers ready for video upload
-- **Rate-limiting** — Redis-backed sliding window (prevents platform blocks)
-- **RING rewards** — Earned per post: `views/100 + likes×5 + retweets×10`
+### ? Multi-Platform Posting
+- **X (Twitter)** � Thread posting, reply chaining, real-time metrics, rate-limiting (5 posts/15 mins)
+- **Instagram** � Mock integration, ready for Meta Graph API
+- **TikTok & YouTube** � Stub APIs, backend workers ready for video upload
+- **Rate-limiting** � Redis-backed sliding window (prevents platform blocks)
+- **RING rewards** � Earned per post: `views/100 + likes�5 + retweets�10`
 
-### ✅ Payment & Monetization
-- **Stripe Checkout** — Hosted payment flow (test card: `4242 4242 4242 4242`)
-- **RING token** — Native reward token earned via posting, referrals, purchases, staking
-- **Verification badges** — Users who purchase RING get `verified: true` status
-- **RING awarding** — +500 RING on purchase, +50 on referral claim, +engagement on post
+### ? Payment & Monetization
+- **Stripe Checkout** � Hosted payment flow (test card: `4242 4242 4242 4242`)
+- **RING token** � Native reward token earned via posting, referrals, purchases, staking
+- **Verification badges** � Users who purchase RING get `verified: true` status
+- **RING awarding** � +500 RING on purchase, +50 on referral claim, +engagement on post
 
-### ✅ Referral System
-- **Unique referral codes** — Generated per user (e.g., `john-abc123`)
-- **Invite tracking** — Track signup source and award bonuses
-- **Dual bonuses** — Referrer +50 RING, referee +50 RING on first purchase
+### ? Referral System
+- **Unique referral codes** � Generated per user (e.g., `john-abc123`)
+- **Invite tracking** � Track signup source and award bonuses
+- **Dual bonuses** � Referrer +50 RING, referee +50 RING on first purchase
 
-### ✅ RING Staking & Yield
-- **Lock periods** — 30, 90, or 180 days
-- **APR rates** — 10% (30-day), 18% (90-day), 25% (180-day)
-- **Automatic yield calculation** — Accrued daily, claimable anytime
-- **Unlock mechanism** — Claim yield early, or wait for full maturity
+### ? RING Staking & Yield
+- **Lock periods** � 30, 90, or 180 days
+- **APR rates** � 10% (30-day), 18% (90-day), 25% (180-day)
+- **Automatic yield calculation** � Accrued daily, claimable anytime
+- **Unlock mechanism** � Claim yield early, or wait for full maturity
 
-### ✅ Family Pools
-- **Shared RING balance** — Invite family members to contribute
-- **Combined yield** — All members' yields accumulate to shared pool
-- **Invite management** — Accept/decline membership
+### ? Family Pools
+- **Shared RING balance** � Invite family members to contribute
+- **Combined yield** � All members' yields accumulate to shared pool
+- **Invite management** � Accept/decline membership
 
-### ✅ User Profile Embeddings
-- **Automatic profiling** — On first generation, user profile auto-embeds (OpenAI embeddings)
-- **pgvector storage** — 1536-dimensional vectors stored in Postgres
-- **Personalization** — Agents use embeddings for content recommendation
+### ? User Profile Embeddings
+- **Automatic profiling** � On first generation, user profile auto-embeds (OpenAI embeddings)
+- **pgvector storage** � 1536-dimensional vectors stored in Postgres
+- **Personalization** � Agents use embeddings for content recommendation
 
-### ✅ Monitoring Dashboard
-- **Real-time metrics** — Active users, total RING circulated, post success rate
-- **Agent traces** — View recent LangGraph workflow executions
-- **Auto-refresh** — Updates every 5 seconds
+### ? Monitoring Dashboard
+- **Real-time metrics** � Active users, total RING circulated, post success rate
+- **Agent traces** � View recent LangGraph workflow executions
+- **Auto-refresh** � Updates every 5 seconds
 - **Accessible at** `/monitoring` (auth required)
 
-### ✅ Queue Management
-- **RQ + Redis** — Background job processing with retries
-- **Job types** — Content generation, video rendering, post scheduling
-- **Future Temporal.io** — Durable workflow orchestration for production
+### ? Queue Management
+- **RQ + Redis** � Background job processing with retries
+- **Job types** � Content generation, video rendering, post scheduling
+- **Future Temporal.io** � Durable workflow orchestration for production
 
 ---
+## Product Vision
+See [.ai/PRODUCT_VISION.md](.ai/PRODUCT_VISION.md) � OneRing is a daily ritual for creators, optimizing momentum and identity over vanity metrics.
+
+## Roadmap
+See [.ai/ROADMAP.md](.ai/ROADMAP.md) for tiered features (Daily Pull, Identity & Status, Network Effects, Experiments) with clear user behaviors and dependencies.
+
+## Extending the System Safely
+See [.ai/BACKEND_EXTENSION_POINTS.md](.ai/BACKEND_EXTENSION_POINTS.md) for backend guidance.
+- Do not introduce side effects in request handlers.
+- All progress-related mutations must be idempotent.
+- Use Temporal for windows/retries and RQ for jobs; prefer deterministic reducers.
+
+Frontend principles and AI behavior:
+- [.ai/FRONTEND_PRINCIPLES.md](.ai/FRONTEND_PRINCIPLES.md)
+- [.ai/AI_BEHAVIOR.md](.ai/AI_BEHAVIOR.md)
+
+OneRing is optimized for long-term creator growth. Every feature must answer: �Why would I open this TODAY instead of tomorrow?�
+
+## Phase 1 Focus (Daily Pull Loop)
+
+**Status:** ✅ All three core features complete and tested.
+
+- **Creator Streaks** - Track consecutive days, mercy mechanics, no punishment
+- **Daily Challenges** - One prompt per day, deterministically assigned from 20-prompt catalog
+- **AI Post Coach** - Deterministic pre-flight feedback (clarity, resonance, platform fit, authenticity, momentum alignment), no LLM required
+
+Together, they answer: "I have a reason to show up (Streaks), I know what to post (Challenges), and I'm getting better at it (Coach)."
+
+## Phase 2 Focus (Momentum & Identity)
+
+**Status:** ✅ Momentum Score complete; ✅ Public Profiles complete; ✅ Archetypes complete.
+
+- **Momentum Score** ✅ - Stable, interpretable 0..100 score based on streak health, daily completion, consistency, and coach engagement; no likes, no viral chasing
+  - Reflects unfolding creative identity over time
+  - Deterministic computation, UTC-aware
+  - Trend detection vs 7-day rolling average
+  - Supportive action hints, never punitive
+  - [Spec](backend/features/momentum/README.md)
+
+- **Public Creator Profiles** ✅ - Public portfolio at `/u/[handle]` showing streak, momentum, recent posts
+  - Read-only public view (no Clerk auth required)
+  - Backend: `GET /v1/profile/public?handle=...` with deterministic stubs
+  - Frontend: Full UI with 7-day momentum graph, streak visualization, recent posts feed
+  - 22 frontend tests + 22 backend tests validating determinism, safety, shape
+  - No secrets leaked, all data computed from user_id hash (safe for public sharing)
+  - Example: `http://localhost:3000/u/alice`
+
+- **Archetypes & Personalization** ✅ - Deterministic creator archetype classification (6 types: truth_teller, builder, philosopher, connector, firestarter, storyteller)
+  - Observes signals from Coach feedback, Challenge choices, and post patterns
+  - Soft guidance without destiny: influences Coach tone + Challenge selection
+  - 23 backend tests + 23 frontend tests + 4 profile integration tests
+  - No shame words, supportive explanations, public-safety enforced
+  - Dashboard card shows primary/secondary + 3-bullet explanation
+  - [Complete Spec](PHASE2_ARCHETYPES_COMPLETE.md) | [Feature Docs](backend/features/archetypes/README.md) | [AI Context](.ai/domain/archetypes.md)
+
+**Invariants:**
+- Features without a clear "Why today?" will not be merged.
+- Event vocabulary: see [.ai/events.md](.ai/events.md).
 
 ## Local Development Setup
-
-### Step 1: Install Prerequisites
-```bash
-# Check Node.js version (18+)
-node --version
-
-# Check Python version (3.10+)
-python --version
-
-# Install pnpm if not already installed
-npm install -g pnpm@latest
-```
-
-### Step 2: Clone & Install
-```bash
-git clone https://github.com/yourrepo/onering.git
-cd onering
-
-pnpm install
-pip install -r backend/requirements.txt
-```
-
-### Step 3: Configure Secrets
-Create `.env.local` from `.env.example`:
-```bash
-cp .env.example .env.local
-```
-
-Fill in these critical secrets:
 ```
 # Clerk
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
@@ -338,7 +370,7 @@ pnpm dev
 stripe listen --forward-to localhost:3000/api/stripe/webhook
 
 # Terminal 5: Monitor logs
-tail -f path/to/pnpm-dev.log
+Get-Content path/to/pnpm-dev.log -Wait -Tail 10
 ```
 
 ### Step 5b: Run Tests Quickly
@@ -425,7 +457,7 @@ curl -X POST http://localhost:8000/v1/generate/content/ \
 4. Observe:
    - Success: Response shows tweet URL(s)
    - Posts visible on your X account within 1 second
-   - Dashboard shows updated RING balance (formula: views/100 + likes×5 + retweets×10)
+   - Dashboard shows updated RING balance (formula: views/100 + likes�5 + retweets�10)
    - Server logs: [post-to-x] posted thread: [url1] [url2]
 
 5. Rate-limit test:
@@ -450,7 +482,7 @@ curl -X POST http://localhost:8000/v1/generate/content/ \
 ```
 
 ### Test 5: Stripe Payment & RING Bonus
-**Goal:** Verify Stripe Checkout → Webhook → Clerk metadata update.
+**Goal:** Verify Stripe Checkout ? Webhook ? Clerk metadata update.
 
 **Prerequisites:**
 - `stripe listen` running and forwarding to `localhost:3000/api/stripe/webhook`
@@ -501,7 +533,7 @@ curl -X POST http://localhost:8000/v1/generate/content/ \
 5. Observe:
    - Balance deducted: 100 RING
    - Staking position created (visible in "My Stakes")
-   - Claimable yield: 100 × 10% / 365 × 30 ≈ 0.82 RING (approx)
+   - Claimable yield: 100 � 10% / 365 � 30 � 0.82 RING (approx)
    - Wait 1-2 minutes, refresh page
    - Claimable yield increases slightly (daily accrual)
 6. Claim yield:
@@ -870,7 +902,7 @@ stripe listen --forward-to localhost:3001/api/stripe/webhook
 2. **Check app permissions in Twitter Developer Portal:**
    - Go to https://developer.twitter.com/en/dashboard/apps
    - Select your app
-   - Click "Setup" → "App Permissions"
+   - Click "Setup" ? "App Permissions"
    - Ensure permissions are set to: **"Read and Write and Direct Messages"** (NOT "Read-Only")
    - If changed, regenerate API keys in the "Keys and Tokens" tab
 
@@ -969,10 +1001,10 @@ pnpm run lint -- --fix
 ```bash
 # WRONG - Will fail with 404
 cd c:\Users\hazar\onering
-python -m uvicorn main:app --port 8000  # ❌ Can't find main module
+python -m uvicorn main:app --port 8000  # ? Can't find main module
 
 # RIGHT - Use the persistent runner
-python run_backend.py  # ✓ Handles directory changes automatically
+python run_backend.py  # ? Handles directory changes automatically
 ```
 
 **Verify backend is working:**
@@ -985,7 +1017,7 @@ curl http://localhost:8000/v1/test
 **Frontend logs will show:**
 ```
 [generate] calling backend: http://localhost:8000/v1/generate/content
-[generate] backend error: 404 {"detail":"Not Found"}  # ❌ Backend not running
+[generate] backend error: 404 {"detail":"Not Found"}  # ? Backend not running
 ```
 
 ### Issue: Backend process exits after ~8 seconds (Windows)
@@ -1068,11 +1100,11 @@ See backend/README.md for instructions.
 
 ### API Contracts
 - POST /v1/generate/content: { prompt: string, type: 'simple'|'viral_thread', platform: string, user_id: string, stream?: boolean }
-- GET /api/analytics/ring/daily: { userId: string } → { userId, range: '7d', series: Array<{ date, total }> }
-- GET /api/analytics/ring/weekly: { userId: string } → { userId, range: '5w', series: Array<{ date, total }> }
-- POST /api/post-to-x: { content } → { success, url?, remaining?, error? }
-- POST /api/post-to-ig: { content } → { success, id?, remaining?, error? }
-- POST /api/post-to-linkedin: { content } → { success, id?, remaining?, error? }
+- GET /api/analytics/ring/daily: { userId: string } ? { userId, range: '7d', series: Array<{ date, total }> }
+- GET /api/analytics/ring/weekly: { userId: string } ? { userId, range: '5w', series: Array<{ date, total }> }
+- POST /api/post-to-x: { content } ? { success, url?, remaining?, error? }
+- POST /api/post-to-ig: { content } ? { success, id?, remaining?, error? }
+- POST /api/post-to-linkedin: { content } ? { success, id?, remaining?, error? }
 
 ### Test Commands
 - Backend: `cd backend && pytest -q`
@@ -1084,3 +1116,6 @@ See backend/README.md for instructions.
 Enable repository hooks to block commits on failing tests:
 - Windows PowerShell: `git config core.hooksPath .githooks && ./.githooks/pre-commit.ps1`
 - Bash: `git config core.hooksPath .githooks && chmod +x .githooks/pre-commit`
+
+
+

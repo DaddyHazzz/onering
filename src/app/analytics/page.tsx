@@ -2,6 +2,7 @@
 
 import { useUser } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
+import LeaderboardPanel from "@/components/analytics/LeaderboardPanel";
 
 export default function AnalyticsPage() {
   const { user } = useUser();
@@ -33,8 +34,14 @@ export default function AnalyticsPage() {
   if (!user) return <div className="p-10 text-white">Sign in to view analytics.</div>;
 
   return (
-    <main className="p-10 text-white">
+    <main className="p-10 min-h-screen bg-gray-900">
       <h1 className="text-3xl font-bold mb-6">Analytics (mock)</h1>
+      
+      {/* Community Leaderboard Section */}
+      <div className="mb-8">
+        <LeaderboardPanel />
+      </div>
+      
       <table className="w-full text-left border-collapse">
         <thead>
           <tr className="border-b border-white/10">

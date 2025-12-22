@@ -1,51 +1,112 @@
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
+"""
+backend/api/analytics.py
+
+Event-driven analytics endpoints (Phase 3.4).
+Pure event-reducer architecture: Events → Reducers → Read Models → API.
+"""
+
+from fastapi import APIRouter, HTTPException, Query
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional
+
+from backend.models.analytics import DraftAnalytics, UserAnalytics, LeaderboardResponse
+from backend.features.analytics.event_store import EventStore
+from backend.features.analytics.reducers import (
+    reduce_draft_analytics,
+    reduce_user_analytics,
+    reduce_leaderboard,
+)
 
 router = APIRouter()
 
-class RingEarnings(BaseModel):
-	date: str
-	total: float
+
+@router.get("/v1/collab/drafts/{draft_id}/analytics", response_model=Dict[str, Any])
+def get_draft_analytics(
+    draft_id: str,
+    now: Optional[str] = Query(None, description="ISO timestamp for deterministic results (testing only)"),
+) -> Dict[str, Any]:
+    """
+    Get analytics for a specific collaborative draft.
+    
+    Returns:
+    - views: number of DraftViewed events
+    - shares: number of DraftShared events
+    - segments_count: number of SegmentAdded events
+    - contributors_count: unique contributors (creator + segment authors)
+    - ring_passes_count: number of RINGPassed events
+    - last_activity_at: most recent activity timestamp
+    
+    Deterministic: same events + same now => identical output.
+    """
+    try:
+        # Parse optional fixed timestamp for deterministic testing
+        now_dt = None
+        if now:
+            now_dt = datetime.fromisoformat(now.replace('Z', '+00:00'))
+        
+        # Fetch all events from event store
+        events = EventStore.get_events()
+        
+        # Reduce events to draft analytics
+        analytics = reduce_draft_analytics(draft_id, events, now=now_dt)
+        
+        return {
+            "success": True,
+            "data": analytics.model_dump(mode="json"),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-def _mock_fetch_user_posts(user_id: str, start: datetime, end: datetime) -> List[Dict[str, Any]]:
-	# TODO: replace with real DB queries (currently deterministic mock)
-	return [
-		{"createdAt": start + timedelta(hours=1), "ringEarned": 25},
-		{"createdAt": start + timedelta(hours=12), "ringEarned": 40},
-		{"createdAt": end - timedelta(hours=2), "ringEarned": 15},
-	]
-
-
-def _aggregate(posts: List[Dict[str, Any]], key_fn) -> List[Dict[str, Any]]:
-	"""Pure deterministic reducer used for both daily/weekly buckets."""
-	buckets: Dict[str, float] = {}
-	for p in posts:
-		key = key_fn(p["createdAt"])
-		buckets[key] = buckets.get(key, 0.0) + float(p.get("ringEarned", 0))
-	return [RingEarnings(date=k, total=v).model_dump() for k, v in sorted(buckets.items())]
-
-
-@router.get("/ring/daily")
-def ring_daily(userId: str = Query(..., description="Clerk user id")) -> Dict[str, Any]:
-	now = datetime.now(timezone.utc)
-	start = now - timedelta(days=7)
-	posts = _mock_fetch_user_posts(userId, start, now)
-	series = _aggregate(posts, lambda dt: dt.strftime("%Y-%m-%d")) if posts else []
-	return {"userId": userId, "range": "7d", "series": series}
-
-
-@router.get("/ring/weekly")
-def ring_weekly(userId: str = Query(..., description="Clerk user id")) -> Dict[str, Any]:
-	now = datetime.now(timezone.utc)
-	start = now - timedelta(days=35)
-	posts = _mock_fetch_user_posts(userId, start, now)
-
-	def week_key(dt: datetime) -> str:
-		iso_year, iso_week, _ = dt.isocalendar()
-		return f"{iso_year}-W{iso_week:02d}"
-
-	series = _aggregate(posts, week_key) if posts else []
-	return {"userId": userId, "range": "5w", "series": series}
+@router.get("/v1/analytics/leaderboard", response_model=Dict[str, Any])
+def get_analytics_leaderboard(
+    metric: str = Query("collaboration", description="collaboration | momentum | consistency"),
+    now: Optional[str] = Query(None, description="ISO timestamp for deterministic results (testing only)"),
+) -> Dict[str, Any]:
+    """
+    Get leaderboard for given metric type.
+    
+    Metric types:
+    - collaboration: segments×3 + rings×2 + drafts_contributed
+    - momentum: segments + drafts_created×5 (stub, Phase 3.5 integrates momentum service)
+    - consistency: drafts_created×5 + drafts_contributed×2
+    
+    Returns:
+    - Top 10 entries only (prevents rank shame)
+    - Stable sort: score desc, user_id asc (deterministic tie-breaker)
+    - Supportive insights (never comparative, never "you're behind")
+    
+    Deterministic: same metric + same now => identical entries in same order.
+    """
+    try:
+        # Validate metric type
+        valid_metrics = ["collaboration", "momentum", "consistency"]
+        if metric not in valid_metrics:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid metric type. Must be one of: {', '.join(valid_metrics)}",
+            )
+        
+        # Parse optional fixed timestamp for deterministic testing
+        now_dt = None
+        if now:
+            now_dt = datetime.fromisoformat(now.replace('Z', '+00:00'))
+        
+        # Fetch all events from event store
+        events = EventStore.get_events()
+        
+        # Reduce events to leaderboard
+        leaderboard = reduce_leaderboard(metric, events, now=now_dt)
+        
+        return {
+            "success": True,
+            "data": leaderboard.model_dump(mode="json"),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")

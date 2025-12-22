@@ -4,6 +4,7 @@ redis
 rq
 python-dotenv
 pydantic
+pydantic-settings
 passlib[bcrypt]
 langgraph
 langchain

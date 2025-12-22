@@ -7,6 +7,8 @@ import Redis from "ioredis";
 import { prisma } from "@/lib/db";
 import { embedThread } from "@/lib/embeddings";
 
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
+
 const schema = z.object({
   content: z.string().min(1),
 });
@@ -201,6 +203,22 @@ export async function POST(req: NextRequest) {
 
     const url = `https://x.com/${process.env.TWITTER_USERNAME || "i"}/status/${previousTweetId}`;
     console.log("[post-to-x] posted, url:", url, "by user:", userId);
+
+    // Notify backend streak service (idempotent, best-effort)
+    try {
+      await fetch(`${BACKEND_URL}/v1/streaks/events/post`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          post_id: previousTweetId,
+          posted_at: new Date().toISOString(),
+          platform: "x",
+        }),
+      });
+    } catch (notifyErr: any) {
+      console.warn("[post-to-x] streak notify failed (non-blocking):", notifyErr?.message || notifyErr);
+    }
 
     // Write to database and update Clerk metadata
     try {
