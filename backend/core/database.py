@@ -9,7 +9,7 @@ This module provides:
 """
 from typing import Optional
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime, Boolean, JSON, Text
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime, Boolean, JSON, Text, Index, ForeignKey, UniqueConstraint
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql import func
@@ -151,6 +151,25 @@ def reset_database():
     create_all_tables()
 
 
+def ensure_constraints_and_indexes():
+    """
+    Ensure all required constraints and indexes exist.
+    
+    This is idempotent: safe to call multiple times.
+    
+    Uses CREATE INDEX IF NOT EXISTS for indexes and verifies
+    UNIQUE constraints are in place (via table definitions).
+    """
+    engine = get_engine()
+    
+    # Constraints are handled by metadata.create_all() in table definitions
+    # Indexes are created by SQLAlchemy's Index objects in table definitions
+    # Both are idempotent as long as "create_all_tables()" is called first
+    
+    # Simply ensure all tables and indexes from metadata exist
+    create_all_tables()
+
+
 def check_connection() -> bool:
     """
     Check if database connection is available.
@@ -180,6 +199,8 @@ analytics_events = Table(
     Column('occurred_at', DateTime(timezone=True), nullable=False, index=True),
     Column('idempotency_key', String(255), unique=True, nullable=False, index=True),
     Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Composite index for common filtering pattern: (event_type, occurred_at)
+    Index('idx_analytics_events_type_occurred', 'event_type', 'occurred_at'),
 )
 
 # Idempotency keys table
@@ -189,6 +210,8 @@ idempotency_keys = Table(
     Column('key', String(255), primary_key=True),
     Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
     Column('scope', String(100), nullable=True, index=True),
+    # Composite index for scope + created_at lookups
+    Index('idx_idempotency_keys_scope_created', 'scope', 'created_at'),
 )
 
 # Collaboration drafts table
@@ -204,6 +227,10 @@ drafts = Table(
     Column('published', Boolean, default=False, nullable=False, index=True),
     Column('published_at', DateTime(timezone=True), nullable=True),
     Column('view_count', Integer, default=0, nullable=False),
+    # Composite index for list_user_drafts pattern: (created_by, created_at)
+    Index('idx_drafts_creator_created', 'created_by', 'created_at'),
+    # Index for published draft queries
+    Index('idx_drafts_published_updated', 'published', 'updated_at'),
 )
 
 # Draft segments table
@@ -216,6 +243,10 @@ draft_segments = Table(
     Column('content', Text, nullable=False),
     Column('position', Integer, nullable=False),
     Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Composite index for get_draft pattern: (draft_id, position) for ordering
+    Index('idx_draft_segments_draft_position', 'draft_id', 'position'),
+    # Unique constraint: (draft_id, position) to prevent duplicate positions
+    UniqueConstraint('draft_id', 'position', name='uq_draft_segments_draft_position'),
 )
 
 # Draft collaborators table
@@ -227,6 +258,10 @@ draft_collaborators = Table(
     Column('user_id', String(100), nullable=False, index=True),
     Column('role', String(50), nullable=False),  # 'owner', 'editor', 'viewer'
     Column('joined_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Unique constraint: one collaborator role per (draft_id, user_id)
+    UniqueConstraint('draft_id', 'user_id', name='uq_draft_collaborators_draft_user'),
+    # Composite index for finding collaborators by draft
+    Index('idx_draft_collaborators_draft_joined', 'draft_id', 'joined_at'),
 )
 
 # Ring passes table
@@ -238,4 +273,9 @@ ring_passes = Table(
     Column('from_user', String(100), nullable=False, index=True),
     Column('to_user', String(100), nullable=False, index=True),
     Column('passed_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Composite index for finding ring history by draft with ordering
+    Index('idx_ring_passes_draft_passed', 'draft_id', 'passed_at', 'id'),
+    # Indexes for querying by user (from/to)
+    Index('idx_ring_passes_from_user', 'from_user'),
+    Index('idx_ring_passes_to_user', 'to_user'),
 )

@@ -25,7 +25,7 @@ sys.path.insert(0, parent_dir)
 try:
     from backend.core.config import settings
     from backend.core.logging import configure_logging
-    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites
+    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health
     from backend.agents.viral_thread import generate_viral_thread
     import groq
     from redis import Redis
@@ -90,9 +90,10 @@ app.include_router(sharecard.router, prefix="/v1", tags=["sharecard"])
 app.include_router(collaboration.router, tags=["collaboration"])
 app.include_router(collaboration_invites.router, tags=["collaboration-invites"])
 app.include_router(archetypes.router, tags=["archetypes"])
+app.include_router(health.router, tags=["health"])
 
 @app.get("/healthz")
-def health():
+def health_simple():
     return {"status": "ok", "env": settings.ENV}
 
 
