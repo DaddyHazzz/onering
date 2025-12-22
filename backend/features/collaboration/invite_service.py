@@ -281,6 +281,19 @@ def accept_invite(
         if draft and user_id not in draft.collaborators:
             draft.collaborators.append(user_id)
 
+    # Phase 4.1: Emit usage event (for the inviter, not the accepter)
+    try:
+        from backend.features.usage.service import emit_usage_event
+        emit_usage_event(
+            user_id=invite.created_by_user_id,
+            usage_key="collaborators.added",
+            occurred_at=now,
+            metadata={"draft_id": invite.draft_id, "collaborator_id": user_id}
+        )
+    except Exception:
+        # Graceful degradation if usage tracking fails
+        pass
+
     # Emit event
     emit_event(
         "collab.invite_accepted",

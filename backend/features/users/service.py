@@ -53,5 +53,24 @@ def get_or_create_user(user_id: str) -> User:
                 created_at=now,
             )
         )
-        # Return created user
-        return User(user_id=user_id, created_at=now, display_name=display, status="active")
+    
+    # Phase 4.1: Auto-assign default plan
+    try:
+        from backend.features.plans.service import assign_default_plan, seed_plans
+        # Ensure plans are seeded
+        try:
+            seed_plans()
+        except Exception:
+            pass
+        # Assign default plan
+        try:
+            assign_default_plan(user_id)
+        except Exception:
+            # Graceful degradation if plan assignment fails
+            pass
+    except Exception:
+        # Graceful degradation if plans module not available
+        pass
+    
+    # Return created user
+    return User(user_id=user_id, created_at=now, display_name=display, status="active")

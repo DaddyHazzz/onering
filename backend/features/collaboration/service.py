@@ -129,6 +129,16 @@ def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
         get_or_create_user(user_id)
     except Exception:
         pass
+    
+    # Phase 4.1: Check entitlement (soft enforcement - log only)
+    try:
+        from backend.features.entitlements.service import check_entitlement
+        check_entitlement(user_id, "drafts.max", requested=1)
+        # Note: Phase 4.1 never blocks, just logs warning
+    except Exception:
+        # Graceful degradation if entitlement check fails
+        pass
+    
     draft_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
@@ -177,6 +187,19 @@ def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
         persistence.create_draft(draft)
     else:
         _drafts_store[draft_id] = draft
+
+    # Phase 4.1: Emit usage event
+    try:
+        from backend.features.usage.service import emit_usage_event
+        emit_usage_event(
+            user_id=user_id,
+            usage_key="drafts.created",
+            occurred_at=now,
+            metadata={"draft_id": draft_id}
+        )
+    except Exception:
+        # Graceful degradation if usage tracking fails
+        pass
 
     # Emit event
     emit_event(
@@ -328,6 +351,19 @@ def append_segment(
     else:
         _drafts_store[draft_id] = updated_draft
         _idempotency_keys.add(request.idempotency_key)
+
+    # Phase 4.1: Emit usage event
+    try:
+        from backend.features.usage.service import emit_usage_event
+        emit_usage_event(
+            user_id=user_id,
+            usage_key="segments.appended",
+            occurred_at=now,
+            metadata={"draft_id": draft_id, "segment_id": segment.segment_id}
+        )
+    except Exception:
+        # Graceful degradation if usage tracking fails
+        pass
 
     # Emit event
     emit_event(

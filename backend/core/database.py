@@ -290,3 +290,57 @@ ring_passes = Table(
     Index('idx_ring_passes_from_user', 'from_user'),
     Index('idx_ring_passes_to_user', 'to_user'),
 )
+
+# Plans table (Phase 4.1 - Monetization Hooks)
+plans = Table(
+    'plans',
+    metadata,
+    Column('plan_id', String(50), primary_key=True),
+    Column('name', String(200), nullable=False),
+    Column('is_default', Boolean, nullable=False, server_default='false'),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Index for finding default plan
+    Index('idx_plans_is_default', 'is_default'),
+)
+
+# Plan entitlements table (Phase 4.1)
+plan_entitlements = Table(
+    'plan_entitlements',
+    metadata,
+    Column('plan_id', String(50), ForeignKey('plans.plan_id'), nullable=False),
+    Column('entitlement_key', String(100), nullable=False),
+    Column('value', JSON, nullable=False),
+    # Primary key is composite (plan_id, entitlement_key)
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Composite primary key
+    UniqueConstraint('plan_id', 'entitlement_key', name='uq_plan_entitlements_plan_key'),
+    # Index for querying entitlements by plan
+    Index('idx_plan_entitlements_plan_id', 'plan_id'),
+)
+
+# User plans table (Phase 4.1)
+user_plans = Table(
+    'user_plans',
+    metadata,
+    Column('user_id', String(100), ForeignKey('app_users.user_id'), primary_key=True),
+    Column('plan_id', String(50), ForeignKey('plans.plan_id'), nullable=False),
+    Column('assigned_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # Index for finding all users on a plan
+    Index('idx_user_plans_plan_id', 'plan_id'),
+)
+
+# Usage events table (Phase 4.1)
+usage_events = Table(
+    'usage_events',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('user_id', String(100), ForeignKey('app_users.user_id'), nullable=False),
+    Column('usage_key', String(100), nullable=False),
+    Column('occurred_at', DateTime(timezone=True), nullable=False),
+    Column('metadata', JSON, nullable=True),
+    # Composite index for usage queries: (user_id, usage_key, occurred_at)
+    Index('idx_usage_events_user_key_occurred', 'user_id', 'usage_key', 'occurred_at'),
+    # Index for time-range queries
+    Index('idx_usage_events_occurred_at', 'occurred_at'),
+)
+

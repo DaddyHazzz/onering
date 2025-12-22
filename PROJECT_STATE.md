@@ -108,6 +108,42 @@ Principles Carried Forward:
 - No LLM ranking or scoring
 - No breaking API changes
 
+### Phase 4.1 — Monetization Hooks ✅ COMPLETE (Dec 22, 2025)
+
+**Purpose:**
+Build the infrastructure to answer "Is this user allowed to do this, under their plan, right now?" without implementing actual payments or billing.
+
+**What This Phase Built:**
+- **Plans Domain**: Plan model with is_default flag, 3 tiers (free, creator, team)
+- **Entitlements Domain**: Entitlement keys (drafts.max, collaborators.max, analytics.enabled) with plan-specific values
+- **User → Plan Assignment**: Every user has exactly one active plan; default plan auto-assigned on user creation
+- **Usage Accounting**: Track usage events (drafts.created, segments.appended, collaborators.added) with deterministic reducers
+- **Entitlement Checks**: Soft enforcement hooks that classify (ALLOWED | WOULD_EXCEED | DISALLOWED) without blocking actions
+- **Observability**: Structured logging of usage + entitlement checks for future billing integration
+
+**What This Phase Did NOT Build:**
+- ❌ No payments or billing
+- ❌ No Stripe, crypto, or wallet integration
+- ❌ No subscriptions UI or pricing pages
+- ❌ No checkout flows
+- ❌ No hard enforcement (actions not blocked in Phase 4.1)
+- ❌ No time-based billing or metering
+- ❌ No currency or pricing
+
+**Why Hooks Before Billing:**
+- Keeps options open for any payment provider (Stripe, PayPal, crypto, enterprise contracts)
+- Enables A/B testing of plan configurations before money is involved
+- Allows safe rollout: measure usage patterns before enforcing limits
+- Reversible: can be disabled without breaking core functionality
+
+**Success Metrics:**
+- ✅ 393/393 tests passing (353 existing + 40 new Phase 4.1)
+- ✅ Zero breaking API changes
+- ✅ Soft enforcement validated (check_entitlement never raises exceptions)
+- ✅ Graceful degradation (failures don't break collaboration flows)
+- ✅ Deterministic usage counting (pure reducer functions)
+- ✅ Provider-agnostic (no Stripe/payment-specific code)
+
 ---
 
 ---
