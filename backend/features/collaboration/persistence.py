@@ -10,6 +10,7 @@ Maintains exact same API contract as service.py.
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
 import json
+import hashlib
 from sqlalchemy import select, insert, update, delete, and_
 from sqlalchemy.exc import IntegrityError
 
@@ -130,6 +131,11 @@ class DraftPersistence:
             
             segments = []
             for seg_row in segments_result:
+                # Deterministic display name using SHA1 hash
+                hash_obj = hashlib.sha1(seg_row.author.encode('utf-8'))
+                hash_hex = hash_obj.hexdigest()
+                author_display = f"@u_{hash_hex[-6:]}"
+                
                 segment = DraftSegment(
                     segment_id=str(seg_row.id),
                     draft_id=draft_id,
@@ -138,9 +144,9 @@ class DraftPersistence:
                     created_at=seg_row.created_at,
                     segment_order=seg_row.position,
                     author_user_id=seg_row.author,
-                    author_display=f"@u_{seg_row.author[-6:]}",
+                    author_display=author_display,
                     ring_holder_user_id_at_write=seg_row.author,
-                    ring_holder_display_at_write=f"@u_{seg_row.author[-6:]}",
+                    ring_holder_display_at_write=author_display,
                 )
                 segments.append(segment)
             
@@ -402,6 +408,34 @@ class DraftPersistence:
                 return True
                 
         except IntegrityError:
+            return False
+    
+    @staticmethod
+    def add_collaborator(draft_id: str, user_id: str) -> bool:
+        """
+        Add user as collaborator to draft (idempotent).
+        
+        Args:
+            draft_id: Draft UUID
+            user_id: User to add
+        
+        Returns:
+            True if added, False if already collaborator or error
+        """
+        try:
+            with get_db_session() as session:
+                collab_row = {
+                    'draft_id': draft_id,
+                    'user_id': user_id,
+                    'role': 'collaborator',
+                }
+                session.execute(insert(draft_collaborators).values(**collab_row))
+                session.commit()
+                return True
+        except IntegrityError:
+            # Already a collaborator (UNIQUE constraint)
+            return False
+        except Exception:
             return False
     
     @staticmethod

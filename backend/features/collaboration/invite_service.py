@@ -262,6 +262,18 @@ def accept_invite(
     _invites_store[invite_id] = accepted_invite
     _invite_idempotency_keys.add(request.idempotency_key)
 
+    # Add user as collaborator (persist to DB if enabled)
+    import os
+    if os.getenv('DATABASE_URL'):
+        from backend.features.collaboration.persistence import DraftPersistence
+        DraftPersistence.add_collaborator(invite.draft_id, user_id)
+    else:
+        # In-memory mode: add to draft.collaborators
+        from backend.features.collaboration.service import _drafts_store
+        draft = _drafts_store.get(invite.draft_id)
+        if draft and user_id not in draft.collaborators:
+            draft.collaborators.append(user_id)
+
     # Emit event
     emit_event(
         "collab.invite_accepted",

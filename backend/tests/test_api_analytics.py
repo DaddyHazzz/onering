@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
 
 from backend.main import app
-from backend.features.analytics.event_store import EventStore, create_event
+from backend.features.analytics.event_store import EventStore, create_event, get_store
 
 
 @pytest.fixture
@@ -21,9 +21,10 @@ def client():
 @pytest.fixture(autouse=True)
 def clear_event_store():
     """Clear event store before and after each test."""
-    EventStore.clear()
+    store = get_store()
+    store.clear()
     yield
-    EventStore.clear()
+    store.clear()
 
 
 @pytest.fixture
@@ -44,9 +45,10 @@ def sample_events(fixed_now):
         create_event("DraftShared", {"draft_id": "draft-1", "user_id": "user-1"}, now=fixed_now - timedelta(minutes=5)),
     ]
     
-    # Append events to store
+    # Append events to store using get_store() for backend consistency
+    store = get_store()
     for i, event in enumerate(events):
-        EventStore.append(event, f"test-key-{i}")
+        store.append(event, f"test-key-{i}")
     
     return events
 
