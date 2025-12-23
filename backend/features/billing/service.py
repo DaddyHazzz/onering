@@ -349,6 +349,13 @@ def process_webhook_event(headers: Dict[str, str], body: bytes) -> BillingWebhoo
                 .values(error=str(e))
             )
             session.commit()
+        # Enqueue retry for processing failure (do not enqueue for already-processed events)
+        try:
+            from backend.features.billing.retry_service import enqueue_retry
+            enqueue_retry(result.event_id, str(e))
+        except Exception:
+            # Retry enqueue should never crash webhook handler
+            pass
         raise
     
     return result

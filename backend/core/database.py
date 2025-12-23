@@ -485,3 +485,36 @@ billing_admin_audit = Table(
     Index('idx_billing_admin_audit_created_at', 'created_at'),
 )
 
+# Billing retry queue (Phase 4.5)
+billing_retry_queue = Table(
+    'billing_retry_queue',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('stripe_event_id', String(100), nullable=False, unique=True, index=True),
+    Column('last_error', Text, nullable=True),
+    Column('attempt_count', Integer, nullable=False, server_default='0'),
+    Column('next_attempt_at', DateTime(timezone=True), nullable=True, index=True),
+    Column('locked_at', DateTime(timezone=True), nullable=True),
+    Column('lock_owner', String(100), nullable=True),
+    Column('status', String(20), nullable=False, server_default='pending', index=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    UniqueConstraint('stripe_event_id', name='uq_billing_retry_stripe_event_id'),
+    Index('idx_billing_retry_due', 'status', 'next_attempt_at'),
+)
+
+# Billing job runs (Phase 4.5)
+billing_job_runs = Table(
+    'billing_job_runs',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('job_name', String(100), nullable=False, index=True),
+    Column('started_at', DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column('finished_at', DateTime(timezone=True), nullable=True),
+    Column('status', String(20), nullable=False),  # success|failure
+    Column('stats_json', Text, nullable=True),
+    Column('error', Text, nullable=True),
+    Index('idx_billing_job_runs_job_name', 'job_name'),
+    Index('idx_billing_job_runs_started', 'started_at'),
+)
+

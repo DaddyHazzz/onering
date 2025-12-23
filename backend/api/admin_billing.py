@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Header, Query, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update, desc, func
+from sqlalchemy import select, update, desc, func, insert
 from sqlalchemy.orm import Session
 
 from backend.core.database import get_db
@@ -21,6 +21,8 @@ from backend.models.billing import (
     BillingAdminAudit,
 )
 from backend.core.config import settings
+from backend.core.database import billing_retry_queue, billing_subscriptions, billing_job_runs
+from backend.features.billing.retry_service import claim_due_retries, process_retry
 
 logger = logging.getLogger("onering.admin_billing")
 
@@ -134,6 +136,27 @@ class ReconciliationResult(BaseModel):
     mismatches: List[Dict[str, Any]]
     corrections_applied: int
     timestamp: datetime
+
+
+class RetryRunRequest(BaseModel):
+    limit: int = Field(default=50, ge=1, le=500)
+    dry_run: bool = Field(default=False)
+
+
+class RetryQueueItem(BaseModel):
+    id: int
+    stripe_event_id: str
+    attempt_count: int
+    status: str
+    next_attempt_at: Optional[datetime]
+
+
+class RetryRunResponse(BaseModel):
+    processed: int
+    succeeded: int
+    failed: int
+    due: int
+    items: List[RetryQueueItem]
 
 
 # ============================================================================
@@ -557,3 +580,145 @@ def reconcile_billing(
     except Exception as e:
         logger.error(f"[admin] reconciliation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/v1/admin/billing/retries", response_model=List[RetryQueueItem])
+def list_retries(
+    status: Optional[str] = Query(None, description="Filter by status (pending|processing|succeeded|failed)"),
+    _: None = Depends(require_admin_auth),
+    session: Session = Depends(get_db),
+):
+    query = select(
+        billing_retry_queue.c.id,
+        billing_retry_queue.c.stripe_event_id,
+        billing_retry_queue.c.attempt_count,
+        billing_retry_queue.c.status,
+        billing_retry_queue.c.next_attempt_at,
+    )
+    if status:
+        query = query.where(billing_retry_queue.c.status == status)
+    query = query.order_by(desc(billing_retry_queue.c.next_attempt_at.nulls_last()))
+    rows = session.execute(query).fetchall()
+    return [
+        RetryQueueItem(
+            id=r.id,
+            stripe_event_id=r.stripe_event_id,
+            attempt_count=int(r.attempt_count or 0),
+            status=r.status,
+            next_attempt_at=r.next_attempt_at,
+        ) for r in rows
+    ]
+
+
+@router.post("/v1/admin/billing/retries/run", response_model=RetryRunResponse)
+def run_retries(
+    req: RetryRunRequest,
+    _: None = Depends(require_admin_auth),
+    session: Session = Depends(get_db),
+):
+    now = datetime.utcnow()
+    due = session.execute(
+        select(func.count(billing_retry_queue.c.id))
+        .where(billing_retry_queue.c.status == 'pending')
+        .where(billing_retry_queue.c.next_attempt_at <= now)
+    ).scalar() or 0
+
+    if req.dry_run:
+        items = session.execute(
+            select(
+                billing_retry_queue.c.id,
+                billing_retry_queue.c.stripe_event_id,
+                billing_retry_queue.c.attempt_count,
+                billing_retry_queue.c.status,
+                billing_retry_queue.c.next_attempt_at,
+            )
+            .where(billing_retry_queue.c.status == 'pending')
+            .where(billing_retry_queue.c.next_attempt_at <= now)
+            .order_by(billing_retry_queue.c.next_attempt_at.asc())
+            .limit(req.limit)
+        ).fetchall()
+        return RetryRunResponse(
+            processed=0,
+            succeeded=0,
+            failed=0,
+            due=due,
+            items=[
+                RetryQueueItem(
+                    id=r.id,
+                    stripe_event_id=r.stripe_event_id,
+                    attempt_count=int(r.attempt_count or 0),
+                    status=r.status,
+                    next_attempt_at=r.next_attempt_at,
+                ) for r in items
+            ],
+        )
+
+    # Non-dry run: claim and process
+    claimed = claim_due_retries(req.limit, now=now, owner="admin_api")
+    succeeded = 0
+    failed = 0
+    for c in claimed:
+        ok = process_retry(c, now=now)
+        if ok:
+            succeeded += 1
+        else:
+            failed += 1
+
+    # Record job run summary
+    stats = {
+        "due": due,
+        "claimed": len(claimed),
+        "succeeded": succeeded,
+        "failed": failed,
+    }
+    session.execute(
+        insert(billing_job_runs).values(
+            job_name="admin.retry.run",
+            started_at=now,
+            finished_at=datetime.utcnow(),
+            status="success",
+            stats_json=str(stats),
+        )
+    )
+    session.commit()
+
+    return RetryRunResponse(
+        processed=len(claimed),
+        succeeded=succeeded,
+        failed=failed,
+        due=due,
+        items=[
+            RetryQueueItem(
+                id=c['id'],
+                stripe_event_id=c['stripe_event_id'],
+                attempt_count=c['attempt_count'],
+                status='processing',
+                next_attempt_at=c['next_attempt_at'],
+            ) for c in claimed
+        ],
+    )
+
+
+@router.get("/v1/admin/billing/subscriptions")
+def list_subscriptions(
+    _: None = Depends(require_admin_auth),
+    session: Session = Depends(get_db),
+):
+    rows = session.execute(
+        select(
+            billing_subscriptions.c.id,
+            billing_subscriptions.c.user_id,
+            billing_subscriptions.c.plan_id,
+            billing_subscriptions.c.status,
+            billing_subscriptions.c.current_period_end,
+        ).order_by(desc(billing_subscriptions.c.updated_at))
+    ).fetchall()
+    return [
+        {
+            "id": r.id,
+            "user_id": r.user_id,
+            "plan_id": r.plan_id,
+            "status": r.status,
+            "current_period_end": r.current_period_end.isoformat() if r.current_period_end else None,
+        } for r in rows
+    ]
