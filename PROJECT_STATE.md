@@ -1,8 +1,8 @@
 # OneRing — Project State (Canonical)
 
-**Last Updated:** December 22, 2025  
-**Status:** Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
-**Test Coverage:** Backend: 353/353 tests passing (100%); Frontend: 298 tests passing (100%)
+**Last Updated:** December 23, 2025  
+**Status:** Phase 4.2 COMPLETE (Hard Enforcement & Overrides); Phase 4.1 COMPLETE (Monetization Hooks); Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
+**Test Coverage:** Backend: 415/415 tests passing (100%); Frontend: 298 tests passing (100%)
 
 ---
 
@@ -144,9 +144,64 @@ Build the infrastructure to answer "Is this user allowed to do this, under their
 - ✅ Deterministic usage counting (pure reducer functions)
 - ✅ Provider-agnostic (no Stripe/payment-specific code)
 
----
+### Phase 4.2 — Hard Enforcement & Overrides ✅ COMPLETE (Dec 23, 2025)
+
+**Purpose:**
+Convert soft entitlement checks into real enforcement while preserving reversibility, admin overrides, and grace windows. No payments, no UI, no API breaks.
+
+**What This Phase Built:**
+- Plan-level enforcement flags (enforcement_enabled boolean + enforcement_grace_count int)
+- Per-entitlement grace tracking (entitlement_grace_usage table; consumption is atomic)
+- Enforcement decisions (ALLOW | ALLOW_WITH_GRACE | WARN_ONLY | BLOCK | DISALLOWED) derived deterministically
+- Service-level blocking for drafts, segments, collaborators with QuotaExceededError (HTTP 403)
+- Admin/support overrides with optional expiry for entitlements (entitlement_overrides table)
+- Centralized entitlement_key → usage_key mapping with tests
+- Structured logs with metrics fields for observability (enforcement.blocked.count, enforcement.warned.count)
+- Idempotent schema upgrades (ALTER TABLE IF NOT EXISTS for enforcement columns)
+
+**What This Phase Did NOT Build:**
+- ❌ Payments, Stripe, crypto, billing
+- ❌ Subscriptions UI or pricing flows
+- ❌ Token wallets or currency changes
+- ❌ Front-end enforcement UI (admin overrides service-layer only)
+
+**Safety & Reversibility:**
+- Plan flag (enforcement_enabled=false) disables enforcement instantly for entire plan
+- Grace overages allow controlled rollout (grace_count=2 means 2 extra beyond limit)
+- Overrides unblock specific users without code changes; optional expiry for time-bounded tests
+- No partial state: QuotaExceededError raised BEFORE mutations (no orphaned drafts/segments)
+- Deterministic reducer logic, no data loss when blocking
+- All enforcement decisions logged with full context
+
+**Success Metrics:**
+- ✅ 415/415 tests passing (396 existing + 19 new Phase 4.2)
+  - 6 schema verification tests (entitlement_overrides, entitlement_grace_usage tables + columns exist)
+  - 8 usage key mapping tests (entitlement_key → usage_key centralized + tested)
+  - 5 error contract tests (QuotaExceededError payload, override bypass, blocking behavior)
+- ✅ Zero breaking API changes; enforcement is plan-level opt-in
+- ✅ Full enforcement validated with grace exhaustion, override bypass, and no-partial-state tests
+- ✅ Graceful degradation (enforcement_enabled=false → WARN_ONLY behavior, Phase 4.1 compatibility preserved)
+- ✅ Deterministic enforcement logic (same user + same plan + same timestamp = same decision)
+- ✅ Provider-agnostic (no Stripe/payment-specific code)
+
+**Files Added:**
+- `backend/tests/test_phase4_2_schema.py` — Schema existence + column verification tests
+- `backend/tests/test_entitlement_usage_mapping.py` — Centralized mapping tests
+- `backend/tests/test_quota_error_contract.py` — QuotaExceededError contract tests  
+- `PHASE4_2_ENFORCEMENT.md` — Session scope document
+
+**Files Modified:**
+- `backend/core/database.py` — Added entitlement_overrides, entitlement_grace_usage tables; apply_schema_upgrades function
+- `backend/core/errors.py` — Added QuotaExceededError class (403 Forbidden)
+- `backend/features/plans/service.py` — Added _ensure_plan_schema guard; redesigned grace from per-plan to per-entitlement; consume_grace + get_grace_remaining functions; reset on plan change
+- `backend/features/entitlements/service.py` — Centralized ENTITLEMENT_USAGE_KEY_MAP + _get_usage_key function; enforce_entitlement function with grace logic; set_override, clear_override for admin overrides; keep legacy check_entitlement (Phase 4.1 compat)
+- `backend/features/collaboration/service.py` — Added enforce_entitlement call in create_draft before mutation
+- `backend/features/collaboration/invite_service.py` — Added enforce_entitlement for collaborators.max on inviter before accept
+- `backend/tests/test_collab_presence_guardrails.py` — Added reset_db fixture to prevent test pollution
 
 ---
+
+## 4. Phase 5+ Vision (Future)
 
 ## 3. Architecture Overview
 

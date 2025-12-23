@@ -30,4 +30,6 @@ class Plan(BaseModel):
     plan_id: str
     name: str
     is_default: bool = False
+    enforcement_enabled: bool = False
+    enforcement_grace_count: int = 0
     created_at: datetime

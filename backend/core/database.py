@@ -9,7 +9,7 @@ This module provides:
 """
 from typing import Optional
 from contextlib import contextmanager
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime, Boolean, JSON, Text, Index, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime, Boolean, JSON, Text, Index, ForeignKey, UniqueConstraint, text
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql import func
@@ -129,6 +129,7 @@ def create_all_tables():
     """
     engine = get_engine()
     metadata.create_all(bind=engine)
+    apply_schema_upgrades(engine)
 
 
 def drop_all_tables():
@@ -168,6 +169,33 @@ def ensure_constraints_and_indexes():
     
     # Simply ensure all tables and indexes from metadata exist
     create_all_tables()
+
+
+def apply_schema_upgrades(engine=None) -> None:
+    """Apply lightweight, idempotent schema upgrades for Phase 4.2.
+
+    Adds enforcement columns if the plans table already exists without them
+    (common in developer databases) and leaves existing data intact.
+    """
+    eng = engine or get_engine()
+    with eng.connect() as conn:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE plans
+                ADD COLUMN IF NOT EXISTS enforcement_enabled BOOLEAN NOT NULL DEFAULT false;
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE plans
+                ADD COLUMN IF NOT EXISTS enforcement_grace_count INTEGER NOT NULL DEFAULT 0;
+                """
+            )
+        )
+        conn.commit()
 
 
 def check_connection() -> bool:
@@ -298,6 +326,8 @@ plans = Table(
     Column('plan_id', String(50), primary_key=True),
     Column('name', String(200), nullable=False),
     Column('is_default', Boolean, nullable=False, server_default='false'),
+    Column('enforcement_enabled', Boolean, nullable=False, server_default='false'),
+    Column('enforcement_grace_count', Integer, nullable=False, server_default='0'),
     Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
     # Index for finding default plan
     Index('idx_plans_is_default', 'is_default'),
@@ -342,5 +372,35 @@ usage_events = Table(
     Index('idx_usage_events_user_key_occurred', 'user_id', 'usage_key', 'occurred_at'),
     # Index for time-range queries
     Index('idx_usage_events_occurred_at', 'occurred_at'),
+)
+
+# Entitlement overrides (Phase 4.2)
+entitlement_overrides = Table(
+    'entitlement_overrides',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('user_id', String(100), ForeignKey('app_users.user_id'), nullable=False, index=True),
+    Column('entitlement_key', String(100), nullable=False),
+    Column('override_value', JSON, nullable=False),
+    Column('reason', Text, nullable=True),
+    Column('expires_at', DateTime(timezone=True), nullable=True),
+    Column('created_by', String(100), nullable=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    UniqueConstraint('user_id', 'entitlement_key', name='uq_entitlement_overrides_user_key'),
+    Index('idx_entitlement_overrides_user', 'user_id'),
+)
+
+# Entitlement grace usage (Phase 4.2)
+entitlement_grace_usage = Table(
+    'entitlement_grace_usage',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('user_id', String(100), ForeignKey('app_users.user_id'), nullable=False, index=True),
+    Column('plan_id', String(50), ForeignKey('plans.plan_id'), nullable=False),
+    Column('entitlement_key', String(100), nullable=False),
+    Column('used', Integer, nullable=False, server_default='0'),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    UniqueConstraint('user_id', 'plan_id', 'entitlement_key', name='uq_entitlement_grace_usage'),
+    Index('idx_entitlement_grace_usage_user', 'user_id'),
 )
 

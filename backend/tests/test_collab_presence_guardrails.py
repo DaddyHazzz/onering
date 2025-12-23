@@ -23,8 +23,8 @@ from backend.models.collab import (
 
 
 @pytest.fixture(autouse=True)
-def reset_store():
-    """Clear store before each test"""
+def reset_store(reset_db):
+    """Clear store before each test (uses reset_db for database cleanup)"""
     clear_store()
     yield
     clear_store()

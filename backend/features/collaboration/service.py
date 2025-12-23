@@ -129,15 +129,10 @@ def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
         get_or_create_user(user_id)
     except Exception:
         pass
-    
-    # Phase 4.1: Check entitlement (soft enforcement - log only)
-    try:
-        from backend.features.entitlements.service import check_entitlement
-        check_entitlement(user_id, "drafts.max", requested=1)
-        # Note: Phase 4.1 never blocks, just logs warning
-    except Exception:
-        # Graceful degradation if entitlement check fails
-        pass
+
+    # Phase 4.2: Hard enforcement (no partial state on block)
+    from backend.features.entitlements.service import enforce_entitlement
+    enforce_entitlement(user_id, "drafts.max", requested=1, usage_key="drafts.created")
     
     draft_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -312,6 +307,9 @@ def append_segment(
         get_or_create_user(user_id)
     except Exception:
         pass
+    # Phase 4.2: Hard enforcement (segments)
+    from backend.features.entitlements.service import enforce_entitlement
+    enforce_entitlement(user_id, "segments.max", requested=1, usage_key="segments.appended", now=now)
     ring_holder_id = draft.ring_state.current_holder_id
     segment = DraftSegment(
         segment_id=str(uuid.uuid4()),

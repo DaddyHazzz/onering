@@ -250,6 +250,16 @@ def accept_invite(
     except Exception:
         pass
 
+    # Enforce collaborator entitlement on inviter (owner)
+    from backend.features.entitlements.service import enforce_entitlement
+    enforce_entitlement(
+        invite.created_by_user_id,
+        "collaborators.max",
+        requested=1,
+        usage_key="collaborators.added",
+        now=now,
+    )
+
     # Accept the invite
     accepted_invite = CollaborationInvite(
         invite_id=invite.invite_id,

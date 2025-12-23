@@ -51,6 +51,11 @@ class RateLimitError(AppError):
     status_code = 429
 
 
+class QuotaExceededError(AppError):
+    code = "quota_exceeded"
+    status_code = 403
+
+
 def _extract_request_id(request: Request, fallback: Optional[str] = None) -> str:
     return (
         getattr(request.state, "request_id", None)
