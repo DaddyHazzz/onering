@@ -220,7 +220,7 @@ def test_admin_endpoint_requires_key(admin_key):
     """Admin endpoints should reject requests without X-Admin-Key header."""
     response = client.get("/v1/admin/billing/events")
     assert response.status_code == 401
-    assert "Invalid or missing X-Admin-Key" in response.json()["detail"]
+    assert "admin_unauthorized" in response.json()["detail"]["code"]
 
 
 def test_admin_endpoint_with_wrong_key(admin_key):

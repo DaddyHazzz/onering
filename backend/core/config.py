@@ -39,8 +39,15 @@ class Settings(BaseSettings):
     # App URLs
     BACKEND_URL: str = "http://localhost:8000"
 
-    # Admin access
-    ADMIN_KEY: Optional[str] = None
+    # Admin access (Phase 4.6: hybrid auth)
+    ADMIN_KEY: Optional[str] = None  # Legacy key (backward compatible)
+    ADMIN_AUTH_MODE: str = "hybrid"  # "clerk" | "legacy" | "hybrid"
+    ENVIRONMENT: str = "dev"  # "dev" | "test" | "prod"
+    
+    # Clerk JWT verification
+    CLERK_ISSUER: Optional[str] = None  # e.g. https://your-instance.clerk.accounts.dev
+    CLERK_AUDIENCE: Optional[str] = None  # typically the app domain or API identifier
+    CLERK_JWKS_URL: Optional[str] = None  # e.g. https://your-instance.clerk.accounts.dev/.well-known/jwks.json
 
     model_config = ConfigDict(
         env_file=".env",

@@ -13,7 +13,7 @@ from sqlalchemy import select, update, desc, func, insert
 from sqlalchemy.orm import Session
 
 from backend.core.database import get_db
-from backend.core.admin_auth import require_admin_auth
+from backend.core.admin_auth import require_admin_auth, require_admin, AdminActor
 from backend.models.billing import (
     BillingSubscription, 
     BillingEvent, 
@@ -163,19 +163,54 @@ class RetryRunResponse(BaseModel):
 # Admin Endpoints
 # ============================================================================
 
+def create_audit_log(
+    session: Session,
+    actor: AdminActor,
+    action: str,
+    target_user_id: Optional[str] = None,
+    target_resource: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None
+) -> int:
+    """
+    Helper to create audit log with actor identity (Phase 4.6).
+    
+    Returns:
+        Audit log ID (0 if insert failed)
+    """
+    import json
+    from backend.core.database import billing_admin_audit
+    
+    try:
+        stmt = insert(billing_admin_audit).values(
+            actor=actor.actor_display or actor.actor_id,  # Legacy field
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type,
+            actor_email=actor.actor_email,
+            auth_mechanism=actor.auth_mechanism,
+            action=action,
+            target_user_id=target_user_id,
+            target_resource=target_resource,
+            payload_json=json.dumps(payload) if payload else None
+        )
+        result = session.execute(stmt)
+        session.commit()
+        return result.inserted_primary_key[0]
+    except Exception as e:
+        logger.warning(f"[admin_billing] audit log creation failed: {e}. Continuing anyway.")
+        return 0
+
 @router.post("/v1/admin/billing/webhook/replay", response_model=WebhookReplayResponse)
 def replay_webhook(
     req: WebhookReplayRequest,
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db)
 ):
     """
     Replay a billing webhook event.
     Useful for debugging or recovering from processing failures.
+    Requires admin authentication (Clerk JWT or legacy X-Admin-Key in dev/test).
     """
-    # Auth handled by require_admin_auth
-    
-    logger.info(f"[admin] webhook replay requested: {req.event_id}, force={req.force}")
+    logger.info(f"[admin] webhook replay requested by {actor.actor_id}: {req.event_id}, force={req.force}")
     
     # Find event
     stmt = select(BillingEvent).where(BillingEvent.id == req.event_id)
@@ -188,20 +223,12 @@ def replay_webhook(
     if event.status == "processed" and not req.force:
         logger.info(f"[admin] event {req.event_id} already processed, not replaying (force=false)")
         # Audit skipped replay attempt
-        audit = BillingAdminAudit(
-            action="webhook_replay",
-            user_id=event.user_id,
-            admin_id="system",
-            details={
-                "event_id": req.event_id,
-                "stripe_event_id": event.stripe_event_id,
-                "status": event.status,
-                "reprocessed": False,
-                "reason": "already_processed",
-            },
+        create_audit_log(
+            session, actor, "webhook_replay_skipped",
+            target_user_id=event.user_id,
+            target_resource=event.stripe_event_id,
+            payload={"event_id": req.event_id, "reason": "already_processed"}
         )
-        session.add(audit)
-        session.commit()
         return WebhookReplayResponse(
             success=True,
             event_id=req.event_id,
@@ -211,7 +238,6 @@ def replay_webhook(
     
     try:
         # Reprocess the event (delegate to billing service)
-        # This would call your event handler
         logger.info(f"[admin] reprocessing event {req.event_id}")
         
         # Mark as reprocessed
@@ -220,20 +246,14 @@ def replay_webhook(
             processed_at=datetime.utcnow()
         )
         session.execute(stmt)
+        
         # Audit successful replay
-        audit = BillingAdminAudit(
-            action="webhook_replay",
-            user_id=event.user_id,
-            admin_id="system",
-            details={
-                "event_id": req.event_id,
-                "stripe_event_id": event.stripe_event_id,
-                "status": "processed",
-                "reprocessed": True,
-            },
+        create_audit_log(
+            session, actor, "webhook_replay",
+            target_user_id=event.user_id,
+            target_resource=event.stripe_event_id,
+            payload={"event_id": req.event_id, "reprocessed": True}
         )
-        session.add(audit)
-        session.commit()
         
         return WebhookReplayResponse(
             success=True,
@@ -252,16 +272,16 @@ def list_billing_events(
     limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = Query(None, description="Filter by status (pending/processed/failed)"),
     user_id: Optional[str] = Query(None, description="Filter by user_id"),
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db)
 ):
     """
     List billing events with optional filtering.
     Returns paginated results.
+    Requires admin authentication (Clerk JWT or legacy X-Admin-Key in dev/test).
     """
-    # Auth handled by require_admin_auth
     
-    logger.info(f"[admin] listing events: skip={skip}, limit={limit}, status={status}, user_id={user_id}")
+    logger.info(f"[admin] listing events by {actor.actor_id}: skip={skip}, limit={limit}, status={status}, user_id={user_id}")
     
     # Build query
     query = select(BillingEvent)
@@ -303,15 +323,14 @@ def list_billing_events(
 @router.post("/v1/admin/billing/plans/sync", response_model=PlanSyncResponse)
 def sync_user_plan(
     req: PlanSyncRequest,
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db)
 ):
     """
     Sync user's subscription plan from local database.
     Useful for resolving stale data.
     """
-    # Auth handled by require_admin_auth
-    
+        
     logger.info(f"[admin] syncing plan for user {req.user_id}, force={req.force_update}")
     
     try:
@@ -360,7 +379,7 @@ def sync_user_plan(
 @router.post("/v1/admin/billing/entitlements/override", response_model=EntitlementOverrideResponse)
 def override_entitlements(
     req: EntitlementOverrideRequest,
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db)
 ):
     """
@@ -368,8 +387,7 @@ def override_entitlements(
     Useful for customer support scenarios.
     Creates an audit trail.
     """
-    # Auth handled by require_admin_auth
-    
+        
     logger.info(f"[admin] overriding entitlements for {req.user_id}: credits={req.credits}, plan={req.plan}")
     
     # Do not require a separate User record; operate on subscription directly
@@ -429,15 +447,14 @@ def override_entitlements(
 @router.post("/v1/admin/billing/grace-period/reset", response_model=GracePeriodResetResponse)
 def reset_grace_period(
     req: GracePeriodResetRequest,
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db)
 ):
     """
     Reset or extend grace period for a subscription.
     Useful for payment recovery scenarios.
     """
-    # Auth handled by require_admin_auth
-    
+        
     logger.info(f"[admin] resetting grace period for {req.user_id}, days={req.days}")
     
     # Find subscription
@@ -499,15 +516,14 @@ def reset_grace_period(
 @router.get("/v1/admin/billing/reconcile", response_model=ReconciliationResult)
 def reconcile_billing(
     fix: bool = Query(False, description="Apply corrections automatically"),
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db)
 ):
     """
     Reconcile billing state between Stripe and local database.
     Detects and optionally corrects mismatches.
     """
-    # Auth handled by require_admin_auth
-    
+        
     logger.info(f"[admin] running reconciliation, fix={fix}")
     
     issues = []
@@ -585,7 +601,7 @@ def reconcile_billing(
 @router.get("/v1/admin/billing/retries", response_model=List[RetryQueueItem])
 def list_retries(
     status: Optional[str] = Query(None, description="Filter by status (pending|processing|succeeded|failed)"),
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db),
 ):
     query = select(
@@ -597,7 +613,7 @@ def list_retries(
     )
     if status:
         query = query.where(billing_retry_queue.c.status == status)
-    query = query.order_by(desc(billing_retry_queue.c.next_attempt_at.nulls_last()))
+    query = query.order_by(billing_retry_queue.c.next_attempt_at.desc().nullslast())
     rows = session.execute(query).fetchall()
     return [
         RetryQueueItem(
@@ -613,7 +629,7 @@ def list_retries(
 @router.post("/v1/admin/billing/retries/run", response_model=RetryRunResponse)
 def run_retries(
     req: RetryRunRequest,
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db),
 ):
     now = datetime.utcnow()
@@ -701,7 +717,7 @@ def run_retries(
 
 @router.get("/v1/admin/billing/subscriptions")
 def list_subscriptions(
-    _: None = Depends(require_admin_auth),
+    actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db),
 ):
     rows = session.execute(

@@ -186,13 +186,13 @@ def ensure_constraints_and_indexes():
 
 
 def apply_schema_upgrades(engine=None) -> None:
-    """Apply lightweight, idempotent schema upgrades for Phase 4.2.
+    """Apply lightweight, idempotent schema upgrades for Phase 4.2+.
 
-    Adds enforcement columns if the plans table already exists without them
-    (common in developer databases) and leaves existing data intact.
+    Adds enforcement columns and Phase 4.6 admin auth columns.
     """
     eng = engine or get_engine()
     with eng.connect() as conn:
+        # Phase 4.2 upgrades
         conn.execute(
             text(
                 """
@@ -209,6 +209,45 @@ def apply_schema_upgrades(engine=None) -> None:
                 """
             )
         )
+        
+        # Phase 4.6 upgrades (admin auth with Clerk JWT support)
+        try:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE billing_admin_audit
+                    ADD COLUMN IF NOT EXISTS actor_id VARCHAR(255);
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE billing_admin_audit
+                    ADD COLUMN IF NOT EXISTS actor_type VARCHAR(20);
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE billing_admin_audit
+                    ADD COLUMN IF NOT EXISTS actor_email VARCHAR(255);
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE billing_admin_audit
+                    ADD COLUMN IF NOT EXISTS auth_mechanism VARCHAR(20);
+                    """
+                )
+            )
+        except Exception:
+            # Table may not exist in test environment, skip
+            pass
+        
         conn.commit()
 
 
@@ -472,7 +511,11 @@ billing_admin_audit = Table(
     'billing_admin_audit',
     metadata,
     Column('id', Integer, primary_key=True, autoincrement=True),
-    Column('actor', String(100), nullable=False),  # "admin_key" or key hash
+    Column('actor', String(100), nullable=False),  # Legacy: "admin_key" or key hash (Phase 4.4)
+    Column('actor_id', String(255), nullable=True),  # Phase 4.6: Clerk user ID or "legacy:<hash>"
+    Column('actor_type', String(20), nullable=True),  # Phase 4.6: "clerk" or "legacy_key"
+    Column('actor_email', String(255), nullable=True),  # Phase 4.6: Email for audit trail
+    Column('auth_mechanism', String(20), nullable=True),  # Phase 4.6: "clerk_jwt" or "x_admin_key"
     Column('action', String(100), nullable=False),  # "replay_webhook", "override_entitlement", etc.
     Column('target_user_id', String(100), nullable=True, index=True),
     Column('target_resource', String(200), nullable=True),  # stripe_event_id, entitlement_key, etc.
@@ -480,6 +523,7 @@ billing_admin_audit = Table(
     Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False, index=True),
     # Indexes for querying audit logs
     Index('idx_billing_admin_audit_actor', 'actor'),
+    Index('idx_billing_admin_audit_actor_id', 'actor_id'),  # Phase 4.6
     Index('idx_billing_admin_audit_action', 'action'),
     Index('idx_billing_admin_audit_user_id', 'target_user_id'),
     Index('idx_billing_admin_audit_created_at', 'created_at'),
