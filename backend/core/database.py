@@ -404,3 +404,52 @@ entitlement_grace_usage = Table(
     Index('idx_entitlement_grace_usage_user', 'user_id'),
 )
 
+# Billing customers (Phase 4.3 - Stripe Integration)
+billing_customers = Table(
+    'billing_customers',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('user_id', String(100), ForeignKey('app_users.user_id'), nullable=False, unique=True, index=True),
+    Column('stripe_customer_id', String(100), nullable=False, unique=True, index=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    Index('idx_billing_customers_user_id', 'user_id'),
+    Index('idx_billing_customers_stripe_id', 'stripe_customer_id'),
+)
+
+# Billing subscriptions (Phase 4.3)
+billing_subscriptions = Table(
+    'billing_subscriptions',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('user_id', String(100), ForeignKey('app_users.user_id'), nullable=False, index=True),
+    Column('stripe_subscription_id', String(100), nullable=False, unique=True, index=True),
+    Column('plan_id', String(50), ForeignKey('plans.plan_id'), nullable=False),
+    Column('status', String(50), nullable=False, index=True),  # active, canceled, past_due, etc.
+    Column('current_period_end', DateTime(timezone=True), nullable=True),
+    Column('cancel_at_period_end', Boolean, nullable=False, server_default='false'),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    Index('idx_billing_subscriptions_user_id', 'user_id'),
+    Index('idx_billing_subscriptions_stripe_id', 'stripe_subscription_id'),
+    Index('idx_billing_subscriptions_status', 'status'),
+)
+
+# Billing events (Phase 4.3 - Webhook idempotency)
+billing_events = Table(
+    'billing_events',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('stripe_event_id', String(100), nullable=False, unique=True, index=True),
+    Column('event_type', String(100), nullable=False, index=True),
+    Column('received_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('payload_hash', String(64), nullable=False),  # SHA256 hash for deduplication
+    Column('processed', Boolean, nullable=False, server_default='false', index=True),
+    Column('processed_at', DateTime(timezone=True), nullable=True),
+    Column('error', Text, nullable=True),
+    UniqueConstraint('stripe_event_id', name='uq_billing_events_stripe_id'),
+    Index('idx_billing_events_stripe_event_id', 'stripe_event_id'),
+    Index('idx_billing_events_received_at', 'received_at'),
+    Index('idx_billing_events_processed', 'processed'),
+)
+

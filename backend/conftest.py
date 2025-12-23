@@ -21,6 +21,22 @@ def db_url():
     return os.getenv('DATABASE_URL')
 
 
+@pytest.fixture(scope="session", autouse=True)
+def create_tables(db_url):
+    """
+    Create all database tables before running tests.
+    
+    Runs once per test session if DATABASE_URL is set.
+    """
+    if not db_url:
+        yield
+        return
+    
+    from backend.core.database import create_all_tables
+    create_all_tables()
+    yield
+
+
 @pytest.fixture(scope="function")
 def reset_db(db_url):
     """
