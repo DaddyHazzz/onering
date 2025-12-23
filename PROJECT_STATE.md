@@ -1,8 +1,8 @@
 # OneRing — Project State (Canonical)
 
 **Last Updated:** December 22, 2025  
-**Status:** Phase 4.3 COMPLETE (Stripe Billing Integration) ✅ FULLY GREEN; Phase 4.2 COMPLETE (Hard Enforcement & Overrides); Phase 4.1 COMPLETE (Monetization Hooks); Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
-**Test Coverage:** Backend: 445/445 tests passing (100%) ✅; Frontend: 298/298 tests passing (100%) ✅
+**Status:** Phase 4.4 COMPLETE (Admin Billing Ops) ✅ FULLY GREEN; Phase 4.3 COMPLETE (Stripe Billing Integration); Phase 4.2 COMPLETE (Hard Enforcement & Overrides); Phase 4.1 COMPLETE (Monetization Hooks); Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
+**Test Coverage:** Backend: 480/480 tests passing (100%) ✅; Frontend: 298/298 tests passing (100%) ✅
 
 ---
 
@@ -274,6 +274,34 @@ Add optional, production-ready Stripe integration without breaking existing feat
 ---
 
 ## 4. Phase 5+ Vision (Future)
+ 
+### Phase 4.4 — Admin Billing Operations ✅ COMPLETE (Dec 22, 2025)
+
+**Purpose:**
+Admin-only endpoints for billing support workflows with strict authentication, deterministic behavior, and immutable audit trails. Operations rely on local state; Stripe verification and webhook idempotency remain intact.
+
+**What This Phase Built:**
+- Admin Auth Gate: centralized `require_admin_auth`; prefers `ADMIN_API_KEY` with `ADMIN_KEY` fallback; 401 for invalid/missing header; 503 if unconfigured.
+- Endpoints: `/v1/admin/billing/events`, `/v1/admin/billing/webhook/replay`, `/v1/admin/billing/plans/sync`, `/v1/admin/billing/entitlements/override`, `/v1/admin/billing/grace-period/reset`, `/v1/admin/billing/reconcile`.
+- Audit Trail: `billing_admin_audit` records all state-changing operations; replay attempts audited even when skipped; reconciliation fixes audited per subscription.
+- Test Infra: SQLite in-memory `StaticPool` + FastAPI dependency overrides to ensure endpoints use the same session in threadpools.
+
+**Files Added/Modified:**
+- `backend/api/admin_billing.py` — Endpoint implementations + audits
+- `backend/core/admin_auth.py` — Centralized admin auth dependency
+- `backend/models/billing.py` — Billing models + admin audit
+- `backend/tests/test_admin_billing.py` — Full behavior tests + schema verification
+- `docs/PHASE4_4_ADMIN_BILLING.md` — Documentation (config, endpoints, audits)
+
+**Success Metrics:**
+- ✅ Backend: 480/480 tests passing (includes 35 admin billing-related tests)
+- ✅ Frontend: 298/298 tests passing
+- ✅ Minimal, deterministic changes; provider idempotency preserved
+
+**What Was NOT Built:**
+- ❌ Admin UI (future)
+- ❌ External provider calls during admin ops
+- ❌ Non-deterministic behaviors
 
 ## 3. Architecture Overview
 

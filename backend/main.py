@@ -33,7 +33,7 @@ try:
         unhandled_exception_handler,
     )
     from backend.core.rate_limit import RateLimitMiddleware, build_rate_limit_config
-    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing
+    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing
     from backend.agents.viral_thread import generate_viral_thread
     import groq
     from redis import Redis
@@ -105,6 +105,7 @@ app.include_router(collaboration_invites.router, tags=["collaboration-invites"])
 app.include_router(archetypes.router, tags=["archetypes"])
 app.include_router(health.router, tags=["health"])
 app.include_router(billing.router, prefix="/api", tags=["billing"])
+app.include_router(admin_billing.router, tags=["admin-billing"])
 
 @app.get("/healthz")
 def health_simple():

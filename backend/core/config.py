@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # App URLs
     BACKEND_URL: str = "http://localhost:8000"
 
+    # Admin access
+    ADMIN_KEY: Optional[str] = None
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -7,7 +7,7 @@ This module provides:
 - Test database support
 - Migration utilities
 """
-from typing import Optional
+from typing import Optional, Generator
 from contextlib import contextmanager
 from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime, Boolean, JSON, Text, Index, ForeignKey, UniqueConstraint, text
 from sqlalchemy.pool import QueuePool
@@ -119,6 +119,20 @@ def get_db_session():
         raise
     finally:
         session.close()
+
+
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI-friendly DB dependency that yields a Session and closes it.
+
+    Use this with `Depends(get_db)` in route functions to ensure the session
+    lifecycle works with both sync and async endpoints under FastAPI.
+    """
+    SessionLocal = get_session_factory()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def create_all_tables():
@@ -451,5 +465,23 @@ billing_events = Table(
     Index('idx_billing_events_stripe_event_id', 'stripe_event_id'),
     Index('idx_billing_events_received_at', 'received_at'),
     Index('idx_billing_events_processed', 'processed'),
+)
+
+# Admin audit log (Phase 4.4)
+billing_admin_audit = Table(
+    'billing_admin_audit',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('actor', String(100), nullable=False),  # "admin_key" or key hash
+    Column('action', String(100), nullable=False),  # "replay_webhook", "override_entitlement", etc.
+    Column('target_user_id', String(100), nullable=True, index=True),
+    Column('target_resource', String(200), nullable=True),  # stripe_event_id, entitlement_key, etc.
+    Column('payload_json', Text, nullable=True),  # Full request/decision payload as JSON
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False, index=True),
+    # Indexes for querying audit logs
+    Index('idx_billing_admin_audit_actor', 'actor'),
+    Index('idx_billing_admin_audit_action', 'action'),
+    Index('idx_billing_admin_audit_user_id', 'target_user_id'),
+    Index('idx_billing_admin_audit_created_at', 'created_at'),
 )
 
