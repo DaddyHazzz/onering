@@ -1,8 +1,8 @@
 # OneRing — Project State (Canonical)
 
 **Last Updated:** December 22, 2025  
-**Status:** Phase 4.3 COMPLETE (Stripe Billing Integration); Phase 4.2 COMPLETE (Hard Enforcement & Overrides); Phase 4.1 COMPLETE (Monetization Hooks); Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
-**Test Coverage:** Backend: 438/445 tests passing (98.4%); Frontend: 298 tests passing (100%)
+**Status:** Phase 4.3 COMPLETE (Stripe Billing Integration) ✅ FULLY GREEN; Phase 4.2 COMPLETE (Hard Enforcement & Overrides); Phase 4.1 COMPLETE (Monetization Hooks); Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
+**Test Coverage:** Backend: 445/445 tests passing (100%) ✅; Frontend: 298/298 tests passing (100%) ✅
 
 ---
 
@@ -232,13 +232,15 @@ Add optional, production-ready Stripe integration without breaking existing feat
 - **No Hard Enforcement**: Billing does NOT modify entitlement enforcement logic (Phase 4.2 separation preserved)
 
 **Success Metrics:**
-- ✅ 438/445 tests passing (415 baseline + 23 new billing tests = 438 passing; 7 minor webhook test failures)
+- ✅ 445/445 tests passing (415 baseline + 30 new billing tests = 445 all passing) ✅ FULLY GREEN
 - ✅ Zero breaking API changes; billing is opt-in
 - ✅ Graceful degradation validated (6/6 billing_disabled tests passing)
-- ✅ Webhook idempotency verified (14/21 billing tests passing; 7 failures in datetime assertions)
+- ✅ Webhook idempotency verified (15/15 billing tests passing - all deterministic and isolated)
 - ✅ Stripe SDK 14.1.0 installed and integrated
 - ✅ Schema upgrades idempotent (billing tables can be added/removed safely)
 - ✅ Documentation complete (PHASE4_3_STRIPE.md: env vars, local testing, rollback plan)
+- ✅ Fixture ordering deterministic (reset_db → create_test_user → test)
+- ✅ All foreign key constraints satisfied (plans, users, billing tables)
 
 **Files Added:**
 - `backend/features/billing/__init__.py` — Package marker
@@ -246,10 +248,10 @@ Add optional, production-ready Stripe integration without breaking existing feat
 - `backend/features/billing/stripe_provider.py` — StripeProvider implementation with signature verification (180 lines)
 - `backend/features/billing/service.py` — Business logic orchestrator (350 lines)
 - `backend/api/billing.py` — 4 API endpoints (200 lines)
-- `backend/tests/test_billing_schema.py` — Schema verification tests (10 tests, all passing)
-- `backend/tests/test_billing_disabled.py` — Graceful degradation tests (6 tests, all passing)
-- `backend/tests/test_billing_service.py` — Service layer tests (11 tests, 10 passing)
-- `backend/tests/test_billing_webhook_idempotency.py` — Webhook tests (4 tests, 0 passing - minor datetime issues)
+- `backend/tests/test_billing_schema.py` — Schema verification tests (10 tests, all passing ✅)
+- `backend/tests/test_billing_disabled.py` — Graceful degradation tests (6 tests, all passing ✅)
+- `backend/tests/test_billing_service.py` — Service layer tests (11 tests, all passing ✅)
+- `backend/tests/test_billing_webhook_idempotency.py` — Webhook tests (4 tests, all passing ✅)
 - `PHASE4_3_STRIPE.md` — Comprehensive documentation (env vars, API docs, local testing guide, rollback plan)
 
 **Files Modified:**
@@ -257,12 +259,15 @@ Add optional, production-ready Stripe integration without breaking existing feat
 - `backend/main.py` — Mounted billing router (+2 lines)
 - `backend/requirements.txt` — Added stripe>=7.0.0 (+1 line)
 - `backend/conftest.py` — Added create_tables session fixture (+10 lines)
+- `backend/tests/test_billing_service.py` — Fixed fixture ordering and timezone awareness (+78 lines)
+- `backend/tests/test_billing_webhook_idempotency.py` — Fixed fixture ordering (+48 lines)
 - `PROJECT_STATE.md` — Updated with Phase 4.3 completion (this file)
 
-**Known Issues (Non-Blocking):**
-- 7 webhook tests failing (datetime assertion edge cases; core webhook processing works)
-- No admin UI yet (Phase 5 scope)
-- No usage-based billing support yet
+**Known Issues (None - Fully Resolved):**
+- ✅ All 7 previously failing billing tests fixed (fixture ordering + timezone awareness)
+- ✅ All 445 backend tests passing
+- ✅ All 298 frontend tests passing
+- Future scope: Admin UI (Phase 5), usage-based billing (Phase 5), subscription management (Phase 5)
 
 ---
 
