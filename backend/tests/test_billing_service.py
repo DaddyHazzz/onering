@@ -5,7 +5,7 @@ Tests with mocked Stripe provider (no real API calls).
 """
 import pytest
 from unittest.mock import Mock, patch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from backend.features.billing.service import (
     ensure_customer_for_user,
     start_checkout,
@@ -14,45 +14,55 @@ from backend.features.billing.service import (
     get_billing_status,
 )
 from backend.features.billing.provider import BillingProviderError
-from backend.core.database import get_db_session, billing_customers, billing_subscriptions, user_plans, users
+from backend.core.database import get_db_session, billing_customers, billing_subscriptions, user_plans, users, plans
 from sqlalchemy import select, delete, insert
 
 
 @pytest.fixture
-def create_test_user():
-    """Create a test user for billing tests."""
+def create_test_user(reset_db):
+    """Create a test user for billing tests. Depends on reset_db to ensure proper ordering."""
+    # reset_db has already truncated all tables
+    # Now create fresh test data: plans first, then users
     with get_db_session() as session:
-        # Check if users exist first
-        existing = session.execute(
-            select(users.c.user_id).where(users.c.user_id == "user_alice")
-        ).fetchone()
-        
-        if not existing:
-            # Create user_alice
-            session.execute(
-                insert(users).values(
-                    user_id="user_alice",
-                    display_name="Alice",
-                    status="active",
-                )
+        # Create plans (needed for foreign key constraints)
+        session.execute(
+            insert(plans).values(
+                plan_id="free",
+                name="Free Plan",
+                is_default=True,
             )
-        
-        existing_bob = session.execute(
-            select(users.c.user_id).where(users.c.user_id == "user_bob")
-        ).fetchone()
-        
-        if not existing_bob:
-            # Create user_bob
-            session.execute(
-                insert(users).values(
-                    user_id="user_bob",
-                    display_name="Bob",
-                    status="active",
-                )
+        )
+        session.execute(
+            insert(plans).values(
+                plan_id="creator",
+                name="Creator Plan",
+                is_default=False,
             )
+        )
+        session.execute(
+            insert(plans).values(
+                plan_id="team",
+                name="Team Plan",
+                is_default=False,
+            )
+        )
+        # Create test users
+        session.execute(
+            insert(users).values(
+                user_id="user_alice",
+                display_name="Alice",
+                status="active",
+            )
+        )
+        session.execute(
+            insert(users).values(
+                user_id="user_bob",
+                display_name="Bob",
+                status="active",
+            )
+        )
         session.commit()
     yield
-    # Cleanup handled by reset_db
 
 
 @pytest.fixture
@@ -264,7 +274,8 @@ def test_get_billing_status_returns_active_subscription(clean_billing_tables, cr
     """get_billing_status should return active subscription."""
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_123")
     
-    period_end = datetime.utcnow() + timedelta(days=30)
+    # Use timezone-aware UTC datetime to match database
+    period_end = datetime.now(timezone.utc) + timedelta(days=30)
     
     with get_db_session() as session:
         session.execute(
@@ -284,7 +295,8 @@ def test_get_billing_status_returns_active_subscription(clean_billing_tables, cr
     assert status["enabled"] is True
     assert status["plan_id"] == "creator"
     assert status["status"] == "active"
-    assert status["period_end"] == period_end
+    # Compare period_end with tolerance (microseconds may differ due to DB storage)
+    assert abs((status["period_end"] - period_end).total_seconds()) < 1
     assert status["cancel_at_period_end"] is False
 
 

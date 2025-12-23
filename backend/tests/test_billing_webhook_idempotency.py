@@ -9,27 +9,47 @@ from unittest.mock import Mock, patch
 from datetime import datetime, timedelta
 from backend.features.billing.service import process_webhook_event
 from backend.features.billing.provider import BillingWebhookResult
-from backend.core.database import get_db_session, billing_events, billing_subscriptions, users
+from backend.core.database import get_db_session, billing_events, billing_subscriptions, users, plans
 from sqlalchemy import select, delete, insert
 
 
 @pytest.fixture
-def create_test_users():
-    """Create test users for webhook tests."""
+def create_test_users(reset_db):
+    """Create test users for webhook tests. Depends on reset_db to ensure proper ordering."""
+    # reset_db has already truncated all tables
+    # Now create fresh test data: plans first, then users
     with get_db_session() as session:
-        # Check if users exist first and insert only if needed
+        # Create plans (needed for foreign key constraints)
+        session.execute(
+            insert(plans).values(
+                plan_id="free",
+                name="Free Plan",
+                is_default=True,
+            )
+        )
+        session.execute(
+            insert(plans).values(
+                plan_id="creator",
+                name="Creator Plan",
+                is_default=False,
+            )
+        )
+        session.execute(
+            insert(plans).values(
+                plan_id="team",
+                name="Team Plan",
+                is_default=False,
+            )
+        )
+        # Create test users
         for user_id, display_name in [("user_alice", "Alice"), ("user_bob", "Bob"), ("user_error", "Error User")]:
-            existing = session.execute(
-                select(users.c.user_id).where(users.c.user_id == user_id)
-            ).fetchone()
-            if not existing:
-                session.execute(
-                    insert(users).values(
-                        user_id=user_id,
-                        display_name=display_name,
-                        status="active",
-                    )
+            session.execute(
+                insert(users).values(
+                    user_id=user_id,
+                    display_name=display_name,
+                    status="active",
                 )
+            )
         session.commit()
     yield
 
