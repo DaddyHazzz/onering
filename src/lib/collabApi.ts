@@ -2,7 +2,9 @@
  * Frontend API client for collaboration endpoints.
  * 
  * Strongly typed wrapper around /v1/collab/* endpoints.
- * Automatically injects X-User-Id header.
+ * 
+ * Phase 6.1: Now uses Clerk JWT for real auth.
+ * Falls back to X-User-Id header for backward compatibility (tests).
  * Handles error normalization and ring-required detection.
  */
 
@@ -18,27 +20,54 @@ import {
 const BASE_URL = "/v1/collab";
 
 /**
- * Get current user ID from localStorage.
- * Note: This is temporary auth for Phase 5.x. Production will use Clerk.
+ * Get auth headers for API requests.
+ * 
+ * Priority:
+ * 1. Clerk JWT from localStorage (set by useAuth hook)
+ * 2. X-User-Id fallback (for tests/backward compatibility)
  */
-function getUserId(): string {
-  if (typeof window === "undefined") {
-    return "";
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  // Try Clerk JWT first
+  const clerkToken = typeof window !== "undefined" 
+    ? localStorage.getItem("clerk_token") 
+    : null;
+  
+  if (clerkToken) {
+    return {
+      "Authorization": `Bearer ${clerkToken}`,
+    };
   }
-  return localStorage.getItem("test_user_id") || "anonymous";
+
+  // Fallback to X-User-Id for backward compatibility
+  const testUserId = typeof window !== "undefined"
+    ? localStorage.getItem("test_user_id")
+    : null;
+  
+  if (testUserId) {
+    return {
+      "X-User-Id": testUserId,
+    };
+  }
+
+  // No auth available (read-only mode)
+  return {};
 }
 
 /**
- * Fetch with X-User-Id header automatically injected.
+ * Fetch with auth headers automatically injected.
+ * 
+ * Tries Clerk JWT first, falls back to X-User-Id.
  */
 async function apiFetch(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<any> {
   const url = `${BASE_URL}${endpoint}`;
+  const authHeaders = await getAuthHeaders();
+  
   const headers = {
     "Content-Type": "application/json",
-    "X-User-Id": getUserId(),
+    ...authHeaders,
     ...(options.headers || {}),
   };
 
