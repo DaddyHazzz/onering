@@ -53,8 +53,13 @@ class ConflictError(AppError):
 
 
 class RateLimitError(AppError):
-    code = "rate_limit"
+    code = "rate_limited"
     status_code = 429
+
+
+class PayloadTooLargeError(AppError):
+    code = "payload_too_large"
+    status_code = 413
 
 
 class QuotaExceededError(AppError):

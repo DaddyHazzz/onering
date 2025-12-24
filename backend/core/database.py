@@ -372,6 +372,21 @@ ring_passes = Table(
     Index('idx_ring_passes_to_user', 'to_user'),
 )
 
+# Audit events table (Phase 6.3)
+audit_events = Table(
+    'audit_events',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('ts', DateTime(timezone=True), server_default=func.now(), nullable=False, index=True),
+    Column('request_id', String(100), nullable=True, index=True),
+    Column('user_id', String(100), nullable=True, index=True),
+    Column('action', String(200), nullable=False, index=True),
+    Column('draft_id', String(100), nullable=True, index=True),
+    Column('metadata', JSON, nullable=True),
+    Column('ip', String(100), nullable=True),
+    Column('user_agent', Text, nullable=True),
+)
+
 # Plans table (Phase 4.1 - Monetization Hooks)
 plans = Table(
     'plans',

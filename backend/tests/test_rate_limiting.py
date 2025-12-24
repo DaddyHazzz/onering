@@ -1,8 +1,11 @@
-"""Tests for soft rate limiting middleware."""
+"""Tests for token-bucket rate limiting middleware."""
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.main import app
+from backend.core.middleware.request_id import RequestIdMiddleware
+from backend.core.middleware.ratelimit import RateLimitMiddleware
+from backend.core.ratelimit import RateLimitConfig
 
 
 class FakeTime:
@@ -17,22 +20,22 @@ class FakeTime:
 
 
 def test_health_rate_limit_enforced_and_resets():
-    client = TestClient(app)
-
-    # Prime middleware to expose limiters on app.state
-    client.get("/api/health/db")
-    limiters = getattr(app.state, "rate_limiters", {})
-    health_limiter = limiters.get("health")
-    assert health_limiter is not None
-
     fake_time = FakeTime()
-    health_limiter.limit = 2
-    health_limiter.windows.clear()
-    health_limiter.time_fn = fake_time
+    config = RateLimitConfig(enabled=True, per_minute_default=2, burst_default=2)
 
-    resp1 = client.get("/api/health/db")
-    resp2 = client.get("/api/health/db")
-    resp3 = client.get("/api/health/db")
+    test_app = FastAPI()
+    test_app.add_middleware(RequestIdMiddleware)
+    test_app.add_middleware(RateLimitMiddleware, config=config, time_fn=fake_time)
+
+    @test_app.get("/api/health/db")
+    async def health_db():
+        return {"ok": True}
+
+    client = TestClient(test_app)
+
+    resp1 = client.get("/api/health/db", headers={"X-User-Id": "user1"})
+    resp2 = client.get("/api/health/db", headers={"X-User-Id": "user1"})
+    resp3 = client.get("/api/health/db", headers={"X-User-Id": "user1"})
 
     assert resp1.status_code == 200
     assert resp2.status_code == 200
@@ -40,9 +43,9 @@ def test_health_rate_limit_enforced_and_resets():
 
     rid = resp3.headers.get("x-request-id")
     payload = resp3.json()
-    assert payload["error"]["code"] == "rate_limit"
+    assert payload["error"]["code"] == "rate_limited"
     assert payload["error"]["request_id"] == rid
 
     fake_time.advance(61)
-    resp4 = client.get("/api/health/db")
+    resp4 = client.get("/api/health/db", headers={"X-User-Id": "user1"})
     assert resp4.status_code == 200

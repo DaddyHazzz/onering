@@ -20,6 +20,8 @@ from backend.models.collab import (
 )
 from backend.features.collaboration.persistence import DraftPersistence
 from backend.core.errors import NotFoundError, PermissionError, ValidationError, RingRequiredError
+from backend.features.audit.service import record_audit_event
+from backend.core.logging import get_request_id
 
 # In-memory stub store (fallback when DB not available)
 _drafts_store: Dict[str, CollabDraft] = {}
@@ -35,7 +37,7 @@ def _get_persistence():
     return DraftPersistence() if _use_persistence() else None
 
 
-def emit_event(event_type: str, payload: dict) -> None:
+def emit_event(event_type: str, payload: dict, request_id: Optional[str] = None) -> None:
     """
     Emit event to WebSocket hub.
     
@@ -45,6 +47,7 @@ def emit_event(event_type: str, payload: dict) -> None:
     import asyncio
     from datetime import datetime, timezone
     from backend.realtime.hub import hub
+    from backend.core.logging import get_request_id
     
     # Extract draft_id from payload
     draft_id = payload.get("draft_id")
@@ -57,6 +60,7 @@ def emit_event(event_type: str, payload: dict) -> None:
         "type": event_type,
         "draft_id": draft_id,
         "ts": datetime.now(timezone.utc).isoformat(),
+        "request_id": request_id or get_request_id(default="n/a"),
         "data": payload,
     }
     
@@ -234,6 +238,15 @@ def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
         # Graceful degradation if usage tracking fails
         pass
 
+    # Audit event
+    record_audit_event(
+        action="collab.create_draft",
+        user_id=user_id,
+        draft_id=draft_id,
+        request_id=get_request_id(),
+        metadata={"title": request.title, "platform": request.platform},
+    )
+
     # Emit event
     emit_event(
         "collab.draft_created",
@@ -405,6 +418,18 @@ def append_segment(
         # Graceful degradation if usage tracking fails
         pass
 
+    record_audit_event(
+        action="collab.append_segment",
+        user_id=user_id,
+        draft_id=draft_id,
+        request_id=get_request_id(),
+        metadata={
+            "segment_id": segment.segment_id,
+            "content_len": len(request.content or ""),
+            "idempotency_key": request.idempotency_key,
+        },
+    )
+
     # Emit event
     emit_event(
         "collab.segment_added",
@@ -504,6 +529,17 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
         _drafts_store[draft_id] = updated_draft
         _idempotency_keys.add(request.idempotency_key)
 
+    record_audit_event(
+        action="collab.pass_ring",
+        user_id=from_user_id,
+        draft_id=draft_id,
+        request_id=get_request_id(),
+        metadata={
+            "to_user_id": request.to_user_id,
+            "idempotency_key": request.idempotency_key,
+        },
+    )
+
     # Emit event
     emit_event(
         "collab.ring_passed",
@@ -552,6 +588,17 @@ def add_collaborator(draft_id: str, creator_user_id: str, collaborator_id: str, 
     else:
         # In-memory fallback
         pass
+
+    record_audit_event(
+        action="collab.add_collaborator",
+        user_id=creator_user_id,
+        draft_id=draft_id,
+        request_id=get_request_id(),
+        metadata={
+            "collaborator_id": collaborator_id,
+            "role": role,
+        },
+    )
     
     # Emit event
     emit_event(

@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:watch": "vitest --watch",
-    "test:all": "pnpm -C backend test && pnpm test"
+    "typecheck": "next lint && tsc -p tsconfig.json --noEmit",
+    "test:all": "pnpm test -- --run && python -m pytest backend/tests -q"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.77",

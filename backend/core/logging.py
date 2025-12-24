@@ -1,10 +1,10 @@
 """
-Structured logging with request ID support (Phase 3.8).
+Structured logging with request ID support (Phase 6.3).
 
 Features:
 - JSON logs in production, pretty logs in development.
 - Context-bound request_id for correlation.
-- RequestIdMiddleware adds request_id to headers and log context.
+- log_event helper for consistent structured logs with safe truncation.
 """
 
 import json
@@ -14,10 +14,8 @@ import sys
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional
 from uuid import uuid4
-
-from starlette.middleware.base import BaseHTTPMiddleware
 
 request_id_ctx_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 
@@ -44,7 +42,6 @@ def latency_bucket_ms(latency_ms: Optional[float]) -> str:
     if latency_ms < 1000:
         return "500-1000ms"
     return ">=1000ms"
-
 
 class RequestIdFilter(logging.Filter):
     """Inject request_id into log records."""
@@ -97,38 +94,41 @@ def configure_logging(env: str = "development") -> None:
     logging.getLogger("uvicorn").propagate = False
     logging.getLogger("uvicorn.error").propagate = False
 
+def _safe_truncate(value, limit: int = 500):
+    try:
+        text = str(value)
+    except Exception:
+        return "<unserializable>"
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
 
-class RequestIdMiddleware(BaseHTTPMiddleware):
-    """Attach a request_id to each request and log completion."""
 
-    def __init__(self, app, header_name: str = "x-request-id"):
-        super().__init__(app)
-        self.header_name = header_name
+def log_event(
+    level: str,
+    msg: str,
+    *,
+    request_id: Optional[str],
+    user_id: Optional[str] = None,
+    draft_id: Optional[str] = None,
+    extra: Optional[Dict[str, object]] = None,
+):
+    """Structured logging helper with safe truncation and request correlation."""
 
-    async def dispatch(self, request, call_next):
-        incoming = request.headers.get(self.header_name)
-        rid = incoming or str(uuid4())
-        request.state.request_id = rid
-        token = request_id_ctx_var.set(rid)
+    logger = logging.getLogger("onering")
+    if not logger.handlers:
+        # Ensure logging configured in edge cases (tests)
+        configure_logging(os.getenv("ENV", "development"))
 
-        start = time.perf_counter()
-        response = await call_next(request)
-        duration_ms = (time.perf_counter() - start) * 1000
+    payload = {
+        "request_id": request_id or get_request_id(),
+        "user_id": user_id,
+        "draft_id": draft_id,
+    }
+    if extra:
+        for k, v in extra.items():
+            payload[k] = _safe_truncate(v)
 
-        response.headers[self.header_name] = rid
-
-        logger = logging.getLogger("onering")
-        logger.info(
-            "request.complete",
-            extra={
-                "request_id": rid,
-                "path": request.url.path,
-                "method": request.method,
-                "status": getattr(response, "status_code", None),
-                "latency_bucket": latency_bucket_ms(duration_ms),
-            },
-        )
-
-        request_id_ctx_var.reset(token)
-        return response
+    log_fn = getattr(logger, level, logger.info)
+    log_fn(msg, extra=payload)
 

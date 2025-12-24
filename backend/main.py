@@ -23,8 +23,9 @@ sys.path.insert(0, parent_dir)
 
 # Import after dotenv is loaded
 try:
-    from backend.core.config import settings
-    from backend.core.logging import configure_logging, RequestIdMiddleware
+    from backend.core.config import settings, validate_config
+    from backend.core.logging import configure_logging
+    from backend.core.middleware.request_id import RequestIdMiddleware
     from backend.core.validation import validate_env
     from backend.core.errors import (
         AppError,
@@ -32,7 +33,8 @@ try:
         http_error_handler,
         unhandled_exception_handler,
     )
-    from backend.core.rate_limit import RateLimitMiddleware, build_rate_limit_config
+    from backend.core.middleware.ratelimit import RateLimitMiddleware
+    from backend.core.ratelimit import build_rate_limit_config_from_env
     from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime
     from backend.agents.viral_thread import generate_viral_thread
     import groq
@@ -49,6 +51,7 @@ except ImportError as e:
 
 configure_logging(settings.ENV)
 validate_env()
+validate_config(strict=getattr(settings, "CONFIG_STRICT", False))
 
 from contextlib import asynccontextmanager
 
@@ -69,7 +72,7 @@ app = FastAPI(title="OneRing - Backend (dev)", lifespan=lifespan)
 
 # Middlewares
 app.add_middleware(RequestIdMiddleware)
-app.add_middleware(RateLimitMiddleware, limits=build_rate_limit_config())
+app.add_middleware(RateLimitMiddleware, config=build_rate_limit_config_from_env(os.environ))
 
 
 def strip_numbering_line(text: str) -> str:
@@ -105,25 +108,9 @@ app.include_router(collaboration_invites.router, tags=["collaboration-invites"])
 app.include_router(realtime.router, tags=["realtime"])
 app.include_router(archetypes.router, tags=["archetypes"])
 app.include_router(health.router, tags=["health"])
+app.include_router(health.root_router, tags=["health"])
 app.include_router(billing.router, prefix="/api", tags=["billing"])
 app.include_router(admin_billing.router, tags=["admin-billing"])
-
-@app.get("/healthz")
-def health_simple():
-    return {"status": "ok", "env": settings.ENV}
-
-
-@app.get("/v1/health")
-def health_check():
-    """Health check endpoint for monitoring and load balancers."""
-    import time
-    uptime = int(time.time() - app.state.startup_time) if hasattr(app.state, 'startup_time') else 0
-    return {
-        "status": "healthy",
-        "uptime": uptime,
-        "routes": len(app.routes)
-    }
-
 
 @app.get("/v1/test")
 def test_endpoint():

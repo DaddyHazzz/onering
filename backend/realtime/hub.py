@@ -6,7 +6,7 @@ Single instance broadcasts events to all WebSocket clients subscribed to a draft
 Thread-safe with proper cleanup of dead sockets.
 """
 
-from typing import Dict, Set
+from typing import Dict, Set, Tuple, Optional
 from fastapi import WebSocket
 import asyncio
 import logging
@@ -25,21 +25,31 @@ class DraftHub:
     def __init__(self):
         # draft_id -> set of connected WebSockets
         self._rooms: Dict[str, Set[WebSocket]] = {}
+        # websocket -> (draft_id, user_id)
+        self._connections: Dict[WebSocket, Tuple[str, Optional[str]]] = {}
+        # user_id -> count
+        self._user_counts: Dict[str, int] = {}
+        self._global_count: int = 0
         # Lock for thread-safe access
         self._lock = asyncio.Lock()
     
-    async def register(self, draft_id: str, websocket: WebSocket) -> None:
+    async def register(self, draft_id: str, websocket: WebSocket, user_id: Optional[str] = None) -> None:
         """
         Register WebSocket in draft room.
         
         Args:
             draft_id: Draft identifier
             websocket: Connected WebSocket client
+            user_id: Optional user identifier for limits/metrics
         """
         async with self._lock:
             if draft_id not in self._rooms:
                 self._rooms[draft_id] = set()
             self._rooms[draft_id].add(websocket)
+            self._connections[websocket] = (draft_id, user_id)
+            if user_id:
+                self._user_counts[user_id] = self._user_counts.get(user_id, 0) + 1
+            self._global_count += 1
             logger.debug(f"[HUB] Registered socket for draft {draft_id}. Total: {len(self._rooms[draft_id])}")
     
     async def unregister(self, draft_id: str, websocket: WebSocket) -> None:
@@ -53,6 +63,14 @@ class DraftHub:
         async with self._lock:
             if draft_id in self._rooms:
                 self._rooms[draft_id].discard(websocket)
+                meta = self._connections.pop(websocket, None)
+                if meta:
+                    _, user_id = meta
+                    if user_id and self._user_counts.get(user_id):
+                        self._user_counts[user_id] = max(0, self._user_counts[user_id] - 1)
+                        if self._user_counts[user_id] == 0:
+                            del self._user_counts[user_id]
+                self._global_count = max(0, self._global_count - 1)
                 
                 # Clean up empty rooms
                 if not self._rooms[draft_id]:
@@ -97,6 +115,15 @@ class DraftHub:
         """Get number of connected clients in a room."""
         async with self._lock:
             return len(self._rooms.get(draft_id, set()))
+
+    async def get_counts(self, draft_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Return current connection counts for policy checks."""
+        async with self._lock:
+            return {
+                "global": self._global_count,
+                "draft": len(self._rooms.get(draft_id, set())) if draft_id else 0,
+                "user": self._user_counts.get(user_id, 0) if user_id else 0,
+            }
 
 
 # Global singleton hub instance

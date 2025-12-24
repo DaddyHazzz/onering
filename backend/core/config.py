@@ -1,3 +1,5 @@
+import logging
+
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 from typing import Optional
@@ -5,6 +7,7 @@ from typing import Optional
 class Settings(BaseSettings):
     # Environment
     ENV: str = "development"
+    CONFIG_STRICT: bool = False
 
     # Core APIs
     GROQ_API_KEY: Optional[str] = None
@@ -38,6 +41,24 @@ class Settings(BaseSettings):
 
     # App URLs
     BACKEND_URL: str = "http://localhost:8000"
+    BASE_URL: str = "http://localhost:8000"
+
+    # Rate limiting (Phase 6.3)
+    RATE_LIMIT_ENABLED: bool = False
+    RATE_LIMIT_PER_MINUTE_DEFAULT: int = 120
+    RATE_LIMIT_BURST_DEFAULT: int = 30
+
+    # WebSocket limits (Phase 6.3)
+    WS_LIMITS_ENABLED: bool = False
+    WS_MAX_SOCKETS_PER_USER: int = 3
+    WS_MAX_SOCKETS_PER_DRAFT: int = 100
+    WS_MAX_SOCKETS_GLOBAL: int = 1000
+    WS_MAX_MESSAGE_BYTES: int = 4096
+    WS_ALLOWED_ORIGINS: str = "*"  # comma-separated
+
+    # Audit logging (Phase 6.3)
+    AUDIT_ENABLED: bool = False
+    AUDIT_SAMPLE_RATE: float = 1.0
 
     # Admin access (Phase 4.6: hybrid auth)
     ADMIN_KEY: Optional[str] = None  # Legacy key (backward compatible)
@@ -55,3 +76,31 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 settings = Settings()
+
+
+def validate_config(strict: Optional[bool] = None, settings_obj: Optional[Settings] = None, logger: Optional[logging.Logger] = None) -> bool:
+    """Validate required configuration.
+
+    In strict mode raise RuntimeError; otherwise emit warnings only.
+    Secrets are not logged, only missing keys.
+    """
+    cfg = settings_obj or settings
+    log = logger or logging.getLogger("onering")
+    strict_mode = strict if strict is not None else getattr(cfg, "CONFIG_STRICT", False)
+
+    required_keys = [
+        "DATABASE_URL",
+        "CLERK_SECRET_KEY",
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        "GROQ_API_KEY",
+        "STRIPE_SECRET_KEY",
+    ]
+
+    missing = [key for key in required_keys if not getattr(cfg, key, None)]
+    if missing:
+        message = f"Missing required configuration: {', '.join(missing)}"
+        if strict_mode:
+            raise RuntimeError(message)
+        log.warning(message)
+
+    return True

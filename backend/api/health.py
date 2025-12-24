@@ -11,14 +11,16 @@ from pydantic import BaseModel
 import time
 
 from fastapi import APIRouter, Query
-from sqlalchemy import text
+from fastapi.responses import JSONResponse
+from sqlalchemy import text, inspect
 
-from backend.core.database import get_db_session, check_connection
+from backend.core.database import get_db_session, check_connection, get_engine
 from backend.core.logging import latency_bucket_ms, get_request_id
 
 logger = logging.getLogger("onering")
 
 router = APIRouter(prefix="/api/health", tags=["health"])
+root_router = APIRouter(tags=["health"])
 
 
 class DBHealth(BaseModel):
@@ -35,6 +37,43 @@ class HealthResponse(BaseModel):
     ok: bool
     db: DBHealth
     computed_at: str  # UTC ISO format
+
+
+@root_router.get("/healthz")
+def healthz():
+    """Lightweight liveness check (no deps)."""
+    return {"status": "ok"}
+
+
+@root_router.get("/readyz")
+def readyz():
+    """Readiness check: DB connectivity + required tables."""
+    required_tables = [
+        "drafts",
+        "draft_segments",
+        "draft_collaborators",
+        "ring_passes",
+        "audit_events",
+    ]
+
+    try:
+        engine = get_engine()
+        # Connection probe
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+
+        # Table existence probe (non-fatal per-table)
+        inspector = inspect(engine)
+        missing = [t for t in required_tables if not inspector.has_table(t)]
+        if missing:
+            detail = f"missing tables: {', '.join(missing)}"
+            logger.warning(f"[readyz] {detail}")
+            return JSONResponse(status_code=503, content={"status": "error", "detail": detail})
+
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"[readyz] readiness check failed: {e}")
+        return JSONResponse(status_code=503, content={"status": "error", "detail": "database unreachable"})
 
 
 @router.get("/db", response_model=HealthResponse)
