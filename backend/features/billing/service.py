@@ -12,7 +12,7 @@ All Stripe-specific code is in stripe_provider.py.
 import os
 import hashlib
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import select, insert, update, and_
 from sqlalchemy.exc import IntegrityError
 
@@ -210,7 +210,7 @@ def apply_subscription_state(
                     status=status,
                     current_period_end=current_period_end,
                     cancel_at_period_end=cancel_at_period_end,
-                    updated_at=datetime.utcnow(),
+                    updated_at=datetime.now(timezone.utc),
                 )
             )
         else:
@@ -239,7 +239,7 @@ def apply_subscription_state(
                 session.execute(
                     update(user_plans)
                     .where(user_plans.c.user_id == user_id)
-                    .values(plan_id=plan_id, assigned_at=datetime.utcnow())
+                    .values(plan_id=plan_id, assigned_at=datetime.now(timezone.utc))
                 )
             else:
                 session.execute(
@@ -260,7 +260,7 @@ def apply_subscription_state(
                 session.execute(
                     update(user_plans)
                     .where(user_plans.c.user_id == user_id)
-                    .values(plan_id="free", assigned_at=datetime.utcnow())
+                    .values(plan_id="free", assigned_at=datetime.now(timezone.utc))
                 )
         
         session.commit()
@@ -337,7 +337,7 @@ def process_webhook_event(headers: Dict[str, str], body: bytes) -> BillingWebhoo
             session.execute(
                 update(billing_events)
                 .where(billing_events.c.stripe_event_id == result.event_id)
-                .values(processed=True, processed_at=datetime.utcnow())
+                .values(processed=True, processed_at=datetime.now(timezone.utc))
             )
             session.commit()
     except Exception as e:

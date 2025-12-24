@@ -193,7 +193,7 @@ def test_start_portal_returns_none_if_no_customer(mock_stripe_provider, clean_bi
 
 def test_apply_subscription_state_creates_subscription(clean_billing_tables, create_test_user, reset_db):
     """apply_subscription_state should create new subscription."""
-    period_end = datetime.utcnow() + timedelta(days=30)
+    period_end = datetime.now(timezone.utc) + timedelta(days=30)
     
     apply_subscription_state(
         user_id="user_alice",
@@ -239,7 +239,7 @@ def test_apply_subscription_state_updates_user_plan(clean_billing_tables, create
 
 def test_apply_subscription_state_idempotent(clean_billing_tables, create_test_user, reset_db):
     """apply_subscription_state should be idempotent (safe to call multiple times)."""
-    period_end = datetime.utcnow() + timedelta(days=30)
+    period_end = datetime.now(timezone.utc) + timedelta(days=30)
     
     # Call twice with same data
     apply_subscription_state(

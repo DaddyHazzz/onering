@@ -5,7 +5,7 @@ Handles webhook replay, event management, and billing overrides.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Header, Query, Depends
 from pydantic import BaseModel, Field
@@ -18,10 +18,10 @@ from backend.models.billing import (
     BillingSubscription, 
     BillingEvent, 
     BillingGracePeriod,
-    BillingAdminAudit,
 )
 from backend.core.config import settings
 from backend.core.database import billing_retry_queue, billing_subscriptions, billing_job_runs
+from backend.core.errors import AdminAuditWriteError
 from backend.features.billing.retry_service import claim_due_retries, process_retry
 
 logger = logging.getLogger("onering.admin_billing")
@@ -174,11 +174,21 @@ def create_audit_log(
     """
     Helper to create audit log with actor identity (Phase 4.6).
     
+    CRITICAL: This must NOT silently fail. Audit writes are security-critical.
+    If audit insert fails, raises AdminAuditWriteError (500) with code="admin_audit_failed".
+    
+    The audit log is inserted into the session but NOT committed here.
+    The endpoint's database transaction will commit it.
+    
     Returns:
-        Audit log ID (0 if insert failed)
+        Audit log ID
+    
+    Raises:
+        AdminAuditWriteError: If audit write fails (this is a 500 error)
     """
     import json
     from backend.core.database import billing_admin_audit
+    from backend.core.errors import AdminAuditWriteError
     
     try:
         stmt = insert(billing_admin_audit).values(
@@ -193,11 +203,17 @@ def create_audit_log(
             payload_json=json.dumps(payload) if payload else None
         )
         result = session.execute(stmt)
-        session.commit()
-        return result.inserted_primary_key[0]
+        # Note: Do NOT commit here - let the endpoint's transaction handle it
+        # This prevents nested transaction issues in tests
+        return result.inserted_primary_key[0] if result.lastrowid else 0
     except Exception as e:
-        logger.warning(f"[admin_billing] audit log creation failed: {e}. Continuing anyway.")
-        return 0
+        logger.error(f"[admin_billing] CRITICAL: audit log creation failed: {e}", exc_info=True)
+        raise AdminAuditWriteError(
+            f"Admin audit write failed (this is a security-critical error): {str(e)}",
+            code="admin_audit_failed",
+            status_code=500
+        )
+
 
 @router.post("/v1/admin/billing/webhook/replay", response_model=WebhookReplayResponse)
 def replay_webhook(
@@ -229,6 +245,7 @@ def replay_webhook(
             target_resource=event.stripe_event_id,
             payload={"event_id": req.event_id, "reason": "already_processed"}
         )
+        session.commit()
         return WebhookReplayResponse(
             success=True,
             event_id=req.event_id,
@@ -243,7 +260,7 @@ def replay_webhook(
         # Mark as reprocessed
         stmt = update(BillingEvent).where(BillingEvent.id == req.event_id).values(
             status="processed",
-            processed_at=datetime.utcnow()
+            processed_at=datetime.now(timezone.utc)
         )
         session.execute(stmt)
         
@@ -254,6 +271,7 @@ def replay_webhook(
             target_resource=event.stripe_event_id,
             payload={"event_id": req.event_id, "reprocessed": True}
         )
+        session.commit()
         
         return WebhookReplayResponse(
             success=True,
@@ -261,7 +279,14 @@ def replay_webhook(
             message="Event replayed successfully",
             reprocessed=True
         )
+    except AdminAuditWriteError:
+        session.rollback()
+        raise
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
+        session.rollback()
         logger.error(f"[admin] webhook replay failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -409,26 +434,26 @@ def override_entitlements(
         if req.valid_until:
             sub.valid_until = req.valid_until
         
-        sub.updated_at = datetime.utcnow()
+        sub.updated_at = datetime.now(timezone.utc)
         session.flush()
         
-        # Create audit entry
-        audit = BillingAdminAudit(
+        # Create audit entry via strict audit logger
+        audit_id = create_audit_log(
+            session,
+            actor,
             action="entitlement_override",
-            user_id=req.user_id,
-            admin_id="system",  # TODO: populate from auth context
-            target_credits=req.credits,
-            target_plan=req.plan,
-            target_valid_until=req.valid_until,
-            details={
+            target_user_id=req.user_id,
+            target_resource=None,
+            payload={
+                "credits": req.credits,
+                "plan": req.plan,
+                "valid_until": req.valid_until.isoformat() if req.valid_until else None,
                 "reason": "Manual admin override",
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            },
         )
-        session.add(audit)
         session.commit()
         
-        logger.info(f"[admin] entitlements overridden for {req.user_id}, audit_id={audit.id}")
+        logger.info(f"[admin] entitlements overridden for {req.user_id}, audit_id={audit_id}")
         
         return EntitlementOverrideResponse(
             success=True,
@@ -436,8 +461,14 @@ def override_entitlements(
             credits=req.credits,
             plan=req.plan,
             valid_until=req.valid_until,
-            audit_id=audit.id
+            audit_id=str(audit_id)
         )
+    except AdminAuditWriteError:
+        session.rollback()
+        raise
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
         logger.error(f"[admin] entitlement override failed: {e}")
         session.rollback()
@@ -468,7 +499,7 @@ def reset_grace_period(
     
     try:
         # Create or update grace period
-        grace_until = datetime.utcnow() + timedelta(days=req.days)
+        grace_until = datetime.now(timezone.utc) + timedelta(days=req.days)
         
         grace = session.execute(
             select(BillingGracePeriod).where(BillingGracePeriod.subscription_id == sub.id)
@@ -476,37 +507,43 @@ def reset_grace_period(
         
         if grace:
             grace.grace_until = grace_until
-            grace.updated_at = datetime.utcnow()
+            grace.updated_at = datetime.now(timezone.utc)
         else:
             grace = BillingGracePeriod(
                 subscription_id=sub.id,
                 grace_until=grace_until
             )
             session.add(grace)
-        
-        # Create audit entry
-        audit = BillingAdminAudit(
+
+        # Create audit entry using create_audit_log
+        audit_id = create_audit_log(
+            session,
+            actor,
             action="grace_period_reset",
-            user_id=req.user_id,
-            admin_id="system",  # TODO: populate from auth context
-            target_grace_until=grace_until,
-            details={
+            target_user_id=req.user_id,
+            payload={
                 "days": req.days,
-                "subscription_id": sub.id
+                "subscription_id": sub.id,
+                "target_grace_until": grace_until.isoformat()
             }
         )
-        session.add(audit)
         session.commit()
         
-        logger.info(f"[admin] grace period reset for {req.user_id}, grace_until={grace_until}, audit_id={audit.id}")
+        logger.info(f"[admin] grace period reset for {req.user_id}, grace_until={grace_until}, audit_id={audit_id}")
         
         return GracePeriodResetResponse(
             success=True,
             user_id=req.user_id,
             subscription_id=sub.id,
             grace_until=grace_until,
-            audit_id=audit.id
+            audit_id=str(audit_id)
         )
+    except AdminAuditWriteError:
+        session.rollback()
+        raise
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
         logger.error(f"[admin] grace period reset failed: {e}")
         session.rollback()
@@ -572,17 +609,17 @@ def reconcile_billing(
         if fix:
             # Write audit entries for each corrected subscription
             for sub in corrected_subs:
-                audit = BillingAdminAudit(
+                create_audit_log(
+                    session,
+                    actor,
                     action="reconcile_fix",
-                    user_id=sub.user_id,
-                    admin_id="system",
-                    details={
+                    target_user_id=sub.user_id,
+                    payload={
                         "subscription_id": sub.id,
                         "new_status": sub.status,
                         "fix": True,
                     },
                 )
-                session.add(audit)
             session.commit()
         
         logger.info(f"[admin] reconciliation complete: {len(issues)} issues, {corrections} corrections applied")
@@ -591,10 +628,17 @@ def reconcile_billing(
             issues_found=len(issues),
             mismatches=issues,
             corrections_applied=corrections,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
+    except AdminAuditWriteError:
+        session.rollback()
+        raise
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
         logger.error(f"[admin] reconciliation failed: {e}")
+        session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -632,7 +676,7 @@ def run_retries(
     actor: AdminActor = Depends(require_admin),
     session: Session = Depends(get_db),
 ):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     due = session.execute(
         select(func.count(billing_retry_queue.c.id))
         .where(billing_retry_queue.c.status == 'pending')
@@ -691,7 +735,7 @@ def run_retries(
         insert(billing_job_runs).values(
             job_name="admin.retry.run",
             started_at=now,
-            finished_at=datetime.utcnow(),
+            finished_at=datetime.now(timezone.utc),
             status="success",
             stats_json=str(stats),
         )

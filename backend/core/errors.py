@@ -56,6 +56,11 @@ class QuotaExceededError(AppError):
     status_code = 403
 
 
+class AdminAuditWriteError(AppError):
+    code = "admin_audit_failed"
+    status_code = 500
+
+
 def _extract_request_id(request: Request, fallback: Optional[str] = None) -> str:
     return (
         getattr(request.state, "request_id", None)

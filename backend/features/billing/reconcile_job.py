@@ -6,7 +6,7 @@ and audits with actor="system_job".
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 from sqlalchemy import select, update, insert
 
@@ -65,7 +65,7 @@ def run_reconcile_job(now: datetime, fix: bool = False, limit: int = 100) -> Dic
             insert(billing_job_runs).values(
                 job_name="system.reconcile",
                 started_at=now,
-                finished_at=datetime.utcnow(),
+                finished_at=datetime.now(timezone.utc),
                 status="success",
                 stats_json=str(stats),
             )

@@ -3,7 +3,7 @@ Flow tests for Phase 4.5 billing retry engine.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, insert
 
 from backend.core.database import (
@@ -26,7 +26,7 @@ def _reset_db():
 
 
 def test_enqueue_retry_creates_pending_row():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     enqueue_retry("evt_retry_1", "boom", now=now)
 
@@ -41,7 +41,7 @@ def test_enqueue_retry_creates_pending_row():
 
 
 def test_claim_and_process_retry_marks_event_processed_and_succeeds():
-    base = datetime.utcnow()
+    base = datetime.now(timezone.utc)
 
     # Seed only the retry queue; no event seeding
     with get_db_session() as session:
@@ -73,7 +73,7 @@ def test_claim_and_process_retry_marks_event_processed_and_succeeds():
 
 
 def test_enqueue_retry_idempotent_updates_existing_row():
-    ts = datetime.utcnow()
+    ts = datetime.now(timezone.utc)
 
     # First enqueue
     enqueue_retry("evt_retry_3", "first", now=ts)

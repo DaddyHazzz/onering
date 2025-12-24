@@ -6,7 +6,7 @@ Verifies duplicate webhook events are not reprocessed.
 import pytest
 import hashlib
 from unittest.mock import Mock, patch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from backend.features.billing.service import process_webhook_event
 from backend.features.billing.provider import BillingWebhookResult
 from backend.core.database import get_db_session, billing_events, billing_subscriptions, users, plans
@@ -93,7 +93,7 @@ def test_webhook_idempotency_skips_duplicate_events(mock_webhook_provider, clean
         subscription_id="sub_test123",
         plan_id="creator",
         status="active",
-        current_period_end=datetime.utcnow() + timedelta(days=30),
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
         cancel_at_period_end=False,
         metadata={},
     )
@@ -176,7 +176,7 @@ def test_webhook_marks_event_as_processed(mock_webhook_provider, clean_billing_e
         subscription_id="sub_test789",
         plan_id="creator",
         status="active",
-        current_period_end=datetime.utcnow() + timedelta(days=30),
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
         cancel_at_period_end=False,
         metadata={},
     )

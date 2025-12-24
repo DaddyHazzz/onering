@@ -11,7 +11,7 @@ Implements proper dependency override for DB session and checks:
 
 import os
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, Table, Column, String
 from sqlalchemy.pool import StaticPool
@@ -203,11 +203,11 @@ def test_schema_billing_events_and_audit_tables_exist(mock_session):
     ]:
         assert col in event_cols
 
-    # Admin audit table columns
+    # Admin audit table columns (Phase 4.6.1 schema)
     assert "billing_admin_audit" in insp.get_table_names()
     audit_cols = {c['name'] for c in insp.get_columns("billing_admin_audit")}
     for col in [
-        "id", "action", "user_id", "admin_id", "created_at"
+        "id", "actor", "actor_id", "actor_type", "actor_email", "auth_mechanism", "action", "created_at"
     ]:
         assert col in audit_cols
 
@@ -267,7 +267,7 @@ def test_webhook_replay_already_processed_no_force(admin_key, mock_session):
         event_type="checkout.session.completed",
         stripe_event_id="evt_test_12345",
         status="processed",
-        processed_at=datetime.utcnow()
+        processed_at=datetime.now(timezone.utc)
     )
     mock_session.add(event)
     mock_session.commit()
@@ -295,7 +295,7 @@ def test_webhook_replay_with_force(admin_key, mock_session):
         event_type="checkout.session.completed",
         stripe_event_id="evt_test_12345",
         status="processed",
-        processed_at=datetime.utcnow() - timedelta(days=1)
+        processed_at=datetime.now(timezone.utc) - timedelta(days=1)
     )
     mock_session.add(event)
     mock_session.commit()
@@ -563,6 +563,27 @@ def test_override_entitlements_updates_existing(admin_key, mock_session):
     assert sub.plan == "enterprise"
 
 
+def test_entitlement_override_fails_when_audit_fails(monkeypatch, admin_key):
+    """Audit failure must bubble up with admin_audit_failed code (no silent swallow)."""
+    from backend.api import admin_billing
+    from backend.core.errors import AdminAuditWriteError
+
+    def boom(*args, **kwargs):
+        raise AdminAuditWriteError("forced audit failure")
+
+    monkeypatch.setattr(admin_billing, "create_audit_log", boom)
+
+    response = client.post(
+        "/v1/admin/billing/entitlements/override",
+        headers={"X-Admin-Key": admin_key},
+        json={"user_id": "user-bad", "credits": 1, "plan": "starter"},
+    )
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["code"] == "admin_audit_failed"
+
+
 # ============================================================================
 # Tests: Grace Period Reset
 # ============================================================================
@@ -610,8 +631,10 @@ def test_grace_period_reset_creates_new_grace_period(admin_key, mock_session):
         subscription_id=sub.id
     ).first()
     assert grace is not None
-    expected_until = datetime.utcnow() + timedelta(days=14)
-    assert abs((grace.grace_until - expected_until).total_seconds()) < 60
+    expected_until = datetime.now(timezone.utc) + timedelta(days=14)
+    # SQLite may return naive datetimes - make it aware if needed
+    grace_until = grace.grace_until if grace.grace_until.tzinfo else grace.grace_until.replace(tzinfo=timezone.utc)
+    assert abs((grace_until - expected_until).total_seconds()) < 60
 
 
 def test_grace_period_reset_updates_existing(admin_key, mock_session):
@@ -627,7 +650,7 @@ def test_grace_period_reset_updates_existing(admin_key, mock_session):
     
     old_grace = BillingGracePeriod(
         subscription_id=sub.id,
-        grace_until=datetime.utcnow()
+        grace_until=datetime.now(timezone.utc)
     )
     mock_session.add(old_grace)
     mock_session.commit()
@@ -648,8 +671,10 @@ def test_grace_period_reset_updates_existing(admin_key, mock_session):
         subscription_id=sub.id
     ).first()
     assert grace.id == original_id
-    expected_until = datetime.utcnow() + timedelta(days=30)
-    assert abs((grace.grace_until - expected_until).total_seconds()) < 60
+    expected_until = datetime.now(timezone.utc) + timedelta(days=30)
+    # SQLite may return naive datetimes - make it aware if needed
+    grace_until = grace.grace_until if grace.grace_until.tzinfo else grace.grace_until.replace(tzinfo=timezone.utc)
+    assert abs((grace_until - expected_until).total_seconds()) < 60
 
 
 # ============================================================================
@@ -747,7 +772,7 @@ def test_admin_workflow_payment_recovery(admin_key, mock_session):
         json={
             "user_id": user_id,
             "credits": 100,
-            "valid_until": (datetime.utcnow() + timedelta(days=7)).isoformat()
+            "valid_until": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
         }
     )
     assert response.status_code == 200
@@ -768,7 +793,9 @@ def test_admin_workflow_payment_recovery(admin_key, mock_session):
         subscription_id=sub.id
     ).first()
     assert grace is not None
-    assert grace.grace_until > datetime.utcnow()
+    # SQLite may return naive datetimes - make it aware if needed
+    grace_until = grace.grace_until if grace.grace_until.tzinfo else grace.grace_until.replace(tzinfo=timezone.utc)
+    assert grace_until > datetime.now(timezone.utc)
 
 
 if __name__ == "__main__":

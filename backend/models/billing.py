@@ -3,14 +3,20 @@ Billing models for OneRing.
 Includes subscriptions, events, grace periods, and admin audit trails.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
+import json
 from typing import Optional, Dict, Any
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, JSON, Index
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Text
+from sqlalchemy.orm import relationship, synonym, declarative_base
 import uuid
 
 Base = declarative_base()
+
+
+def utc_now():
+    """Timezone-aware UTC now for SQLAlchemy defaults."""
+    return datetime.now(timezone.utc)
 
 
 class BillingSubscription(Base):
@@ -34,8 +40,8 @@ class BillingSubscription(Base):
     is_on_grace_period = Column(Boolean, default=False)
     
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Relations
     events = relationship("BillingEvent", back_populates="subscription")
@@ -66,7 +72,7 @@ class BillingEvent(Base):
     event_data = Column(JSON, nullable=True)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     processed_at = Column(DateTime, nullable=True)
     
     # Relations
@@ -90,8 +96,8 @@ class BillingGracePeriod(Base):
     reason = Column(String(255), nullable=True)  # payment_failed, manual_override, etc.
     
     # Audit
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Relations
     subscription = relationship("BillingSubscription", back_populates="grace_periods")
@@ -102,34 +108,46 @@ class BillingGracePeriod(Base):
 
 
 class BillingAdminAudit(Base):
-    """Admin audit trail for billing operations."""
+    """Admin audit trail for billing operations (Phase 4.6.1 schema)."""
     __tablename__ = "billing_admin_audit"
-    
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    
-    # Action
-    action = Column(String(100), nullable=False, index=True)  # entitlement_override, grace_period_reset, webhook_replay, etc.
-    
-    # Actors
-    user_id = Column(String(255), ForeignKey("user.id"), nullable=False, index=True)
-    admin_id = Column(String(255), nullable=False, index=True)  # Future: Link to admin user
-    
-    # Changes
-    target_credits = Column(Integer, nullable=True)
-    target_plan = Column(String(50), nullable=True)
-    target_valid_until = Column(DateTime, nullable=True)
-    target_grace_until = Column(DateTime, nullable=True)
-    
-    # Details and reason
-    details = Column(JSON, nullable=True)
-    reason = Column(String(500), nullable=True)
-    
-    # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    
-    # Relations
-    
+
+    # Align with core.database.billing_admin_audit definition
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor = Column(String(100), nullable=False, index=True)  # Legacy display/identifier
+    actor_id = Column(String(255), nullable=True, index=True)
+    actor_type = Column(String(20), nullable=True)
+    actor_email = Column(String(255), nullable=True)
+    auth_mechanism = Column(String(20), nullable=True)
+    action = Column(String(100), nullable=False, index=True)
+    target_user_id = Column(String(100), nullable=True, index=True)
+    target_resource = Column(String(200), nullable=True)
+    payload_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+
+    # Backward compatibility: tests and legacy code still expect user_id
+    user_id = synonym("target_user_id")
+
+    @property
+    def _payload(self) -> Dict[str, Any]:
+        try:
+            if isinstance(self.payload_json, str):
+                return json.loads(self.payload_json)
+            return self.payload_json or {}
+        except Exception:
+            return {}
+
+    @property
+    def target_credits(self) -> Optional[int]:
+        return self._payload.get("credits")
+
+    @property
+    def target_plan(self) -> Optional[str]:
+        return self._payload.get("plan")
+
     __table_args__ = (
-        Index("ix_billing_admin_audit_user_id_action", "user_id", "action"),
-        Index("ix_billing_admin_audit_admin_id", "admin_id"),
+        Index("idx_billing_admin_audit_actor", "actor"),
+        Index("idx_billing_admin_audit_actor_id", "actor_id"),
+        Index("idx_billing_admin_audit_action", "action"),
+        Index("idx_billing_admin_audit_user_id", "target_user_id"),
+        Index("idx_billing_admin_audit_created_at", "created_at"),
     )

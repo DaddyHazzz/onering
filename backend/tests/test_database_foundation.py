@@ -32,11 +32,11 @@ def test_database_foundation():
     
     # Step 1: Check connection
     print("\n[1/5] Checking database connection...")
-    if not check_connection():
-        print("❌ Database connection failed!")
-        print("   Make sure PostgreSQL is running:")
-        print("   docker-compose -f infra/docker-compose.yml up -d postgres")
-        return False
+    assert check_connection(), (
+        "Database connection failed! "
+        "Make sure PostgreSQL is running: "
+        "docker-compose -f infra/docker-compose.yml up -d postgres"
+    )
     print("✅ Database connection successful")
     
     # Step 2: Create tables (idempotent)
@@ -45,8 +45,7 @@ def test_database_foundation():
         create_all_tables()
         print("✅ Tables created successfully")
     except Exception as e:
-        print(f"❌ Failed to create tables: {e}")
-        return False
+        raise AssertionError(f"Failed to create tables: {e}")
     
     # Step 3: Test idempotency keys table
     print("\n[3/5] Testing idempotency keys table...")
@@ -66,11 +65,8 @@ def test_database_foundation():
                 select(idempotency_keys).where(idempotency_keys.c.key == test_key)
             ).first()
             
-            if result and result.key == test_key:
-                print(f"✅ Idempotency key inserted and retrieved: {result.key}")
-            else:
-                print("❌ Failed to retrieve idempotency key")
-                return False
+            assert result and result.key == test_key, "Failed to retrieve idempotency key"
+            print(f"✅ Idempotency key inserted and retrieved: {result.key}")
             
             # Clean up
             session.execute(
@@ -79,8 +75,7 @@ def test_database_foundation():
             session.commit()
             
     except Exception as e:
-        print(f"❌ Idempotency keys test failed: {e}")
-        return False
+        raise AssertionError(f"Idempotency keys test failed: {e}")
     
     # Step 4: Test duplicate key rejection
     print("\n[4/5] Testing duplicate key rejection...")
@@ -106,8 +101,9 @@ def test_database_foundation():
                 session.execute(stmt)
                 session.commit()
             
-            print("❌ Duplicate key was not rejected!")
-            return False
+            raise AssertionError("Duplicate key was not rejected!")
+        except AssertionError:
+            raise
         except Exception:
             print("✅ Duplicate key correctly rejected")
         
@@ -118,9 +114,10 @@ def test_database_foundation():
             )
             session.commit()
             
+    except AssertionError:
+        raise
     except Exception as e:
-        print(f"❌ Duplicate key test failed: {e}")
-        return False
+        raise AssertionError(f"Duplicate key test failed: {e}")
     
     # Step 5: Verify all expected tables exist
     print("\n[5/5] Verifying all tables exist...")
@@ -141,21 +138,18 @@ def test_database_foundation():
         
         missing_tables = [t for t in expected_tables if t not in existing_tables]
         
-        if missing_tables:
-            print(f"❌ Missing tables: {missing_tables}")
-            return False
+        assert not missing_tables, f"Missing tables: {missing_tables}"
         
         print(f"✅ All {len(expected_tables)} tables exist:")
         for table in expected_tables:
             print(f"   - {table}")
     except Exception as e:
-        print(f"❌ Table verification failed: {e}")
-        return False
+        raise AssertionError(f"Table verification failed: {e}")
     
     print("\n" + "=" * 60)
     print("✅ PART 1 COMPLETE: Database foundation is ready")
     print("=" * 60)
-    return True
+    # Test passed - pytest will capture this
 
 
 if __name__ == "__main__":

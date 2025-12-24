@@ -13,7 +13,7 @@ import os
 import sys
 import time
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -29,7 +29,7 @@ def get_request_id(default: Optional[str] = None) -> Optional[str]:
 
 
 def _format_timestamp(record: logging.LogRecord) -> str:
-    return datetime.utcfromtimestamp(record.created).isoformat() + "Z"
+    return datetime.fromtimestamp(record.created, timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 def latency_bucket_ms(latency_ms: Optional[float]) -> str:

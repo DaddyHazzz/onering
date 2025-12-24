@@ -7,7 +7,7 @@ based on stored local state only.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, insert
 from sqlalchemy.orm import Session
@@ -35,7 +35,7 @@ def enqueue_retry(stripe_event_id: str, error: str, now: Optional[datetime] = No
 
     If a row exists, updates last_error and schedules next_attempt_at based on backoff.
     """
-    ts = now or datetime.utcnow()
+    ts = now or datetime.now(timezone.utc)
     with get_db_session() as session:
         existing = session.execute(
             select(
@@ -90,7 +90,7 @@ def claim_due_retries(limit: int, now: Optional[datetime] = None, owner: str = "
 
     SQLite doesn't support SKIP LOCKED; tests run single-threaded so this is safe.
     """
-    ts = now or datetime.utcnow()
+    ts = now or datetime.now(timezone.utc)
     claimed = []
     with get_db_session() as session:
         rows = session.execute(
@@ -127,7 +127,7 @@ def process_retry(row: Dict[str, Any], max_attempts: int = MAX_ATTEMPTS_DEFAULT,
 
     Returns True if succeeded, False otherwise.
     """
-    ts = now or datetime.utcnow()
+    ts = now or datetime.now(timezone.utc)
     event_id = row['stripe_event_id']
     attempt = int(row['attempt_count'] or 0)
 
@@ -195,7 +195,7 @@ def process_retry(row: Dict[str, Any], max_attempts: int = MAX_ATTEMPTS_DEFAULT,
 
 
 def mark_succeeded(stripe_event_id: str, now: Optional[datetime] = None) -> None:
-    ts = now or datetime.utcnow()
+    ts = now or datetime.now(timezone.utc)
     with get_db_session() as session:
         session.execute(
             update(billing_retry_queue)
@@ -206,7 +206,7 @@ def mark_succeeded(stripe_event_id: str, now: Optional[datetime] = None) -> None
 
 
 def mark_failed(stripe_event_id: str, now: Optional[datetime] = None) -> None:
-    ts = now or datetime.utcnow()
+    ts = now or datetime.now(timezone.utc)
     with get_db_session() as session:
         session.execute(
             update(billing_retry_queue)

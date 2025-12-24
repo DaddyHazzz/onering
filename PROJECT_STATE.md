@@ -1,8 +1,9 @@
 # OneRing — Project State (Canonical)
 
 **Last Updated:** December 23, 2025  
-**Status:** Phase 4.6 COMPLETE (Admin Auth + Real Sessions) ✅ FULLY GREEN; Phase 4.4 COMPLETE (Admin Billing Ops); Phase 4.3 COMPLETE (Stripe Billing Integration); Phase 4.2 COMPLETE (Hard Enforcement & Overrides); Phase 4.1 COMPLETE (Monetization Hooks); Phase 4.0 COMPLETE (Platform Foundations); Phase 3.8 COMPLETE (Ops Hardening); Phase 3.7 COMPLETE (DB Hardening + Ops); Phase 3.6 COMPLETE (Deterministic Collaboration); Phase 3.5 COMPLETE (PostgreSQL Persistence)  
-**Test Coverage:** Backend: 494/494 tests passing (100%) ✅; Frontend: 299/299 tests passing (100%) ✅
+**Status:** Phase 4.6.2 COMPLETE (Technical Debt Elimination) ✅ | Phase 4.6.1 COMPLETE (Strict Audit) ✅ | Phase 4.6 COMPLETE (Admin Auth + Real Sessions) ✅  
+**Test Coverage:** Backend: 514/514 tests passing (100%) ✅ | Frontend: 299/299 tests passing (100%) ✅ | **Warnings: 0** ✅  
+**Python Compatibility:** 3.10+ to 3.14+ ✅ (Datetime deprecations eliminated)
 
 ---
 
@@ -270,6 +271,44 @@ Add optional, production-ready Stripe integration without breaking existing feat
 - Future scope: Admin UI (Phase 5), usage-based billing (Phase 5), subscription management (Phase 5)
 
 ---
+
+### Phase 4.6.2 — Technical Debt Elimination ✅ COMPLETE (Dec 23, 2025)
+
+**Purpose:**
+Remove all deprecation warnings, enforce timezone-aware datetime policy, and ensure Python 3.14+ compatibility. Repository is now warning-free and future-proof.
+
+**What This Phase Fixed:**
+- **Datetime Policy:** Replaced all 32 `datetime.utcnow()` and 1 `datetime.utcfromtimestamp()` with `datetime.now(timezone.utc)`
+- **SQLAlchemy Defaults:** Created `utc_now()` helper in models/billing.py to eliminate Column default deprecations
+- **Pytest Warnings:** Replaced `return True/False` with assertions in test_database_foundation.py
+- **SQLAlchemy Migration:** Moved `declarative_base` from `sqlalchemy.ext.declarative` to `sqlalchemy.orm`
+- **Test Compatibility:** Added naive/aware datetime handling for SQLite (which loses tzinfo on retrieval)
+
+**Files Modified:** 14 files total
+- `backend/core/logging.py`, `backend/models/billing.py`, `backend/api/admin_billing.py`
+- `backend/features/billing/*.py` (service, retry_service, reconcile_job)
+- `backend/tests/test_*.py` (admin_billing, billing_service, billing_webhook_idempotency, billing_reconcile_job, billing_retry_flow, database_foundation, datetime_timezone_policy)
+- `backend/pytest.ini`
+
+**Success Metrics:**
+- ✅ Backend: 514/514 tests passing (100%)
+- ✅ Frontend: 299/299 tests passing (100%)
+- ✅ **Warnings: 0** (all deprecations eliminated)
+- ✅ Python 3.14+ compatible
+
+**Documentation:** `docs/PHASE4_6_2_TECH_DEBT_CLOSEOUT.md`
+
+---
+
+### Phase 4.6.1 — Strict Audit (No Silent Failures) ✅ COMPLETE (Dec 23, 2025)
+
+**Purpose:**
+Enforce strict audit logging - no silent swallowing of audit write errors. Offline Clerk JWT testing with RS256 support.
+
+**Success Metrics:**
+- ✅ Backend: 510/510 tests passing
+- ✅ No audit swallowing - all failures propagate with AdminAuditWriteError
+- ✅ Offline test suite (zero Clerk API calls)
 
 ---
 

@@ -3,7 +3,7 @@ Tests for scheduled reconciliation job (Phase 4.5).
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import select
 
 from backend.core.database import (
@@ -27,7 +27,7 @@ def _reset_db():
 
 
 def test_reconcile_job_records_job_run():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Just call reconcile with fix=false (no mutations)
     result = run_reconcile_job(now=now, fix=False)
