@@ -41,6 +41,12 @@ class PermissionError(AppError, builtins.PermissionError):
     status_code = 403
 
 
+class RingRequiredError(AppError):
+    """Raised when user must hold the ring to perform an action."""
+    code = "ring_required"
+    status_code = 403
+
+
 class ConflictError(AppError):
     code = "conflict"
     status_code = 409

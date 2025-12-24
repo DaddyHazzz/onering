@@ -19,7 +19,7 @@ from backend.models.collab import (
     RingPassRequest,
 )
 from backend.features.collaboration.persistence import DraftPersistence
-from backend.core.errors import NotFoundError, PermissionError, ValidationError
+from backend.core.errors import NotFoundError, PermissionError, ValidationError, RingRequiredError
 
 # In-memory stub store (fallback when DB not available)
 _drafts_store: Dict[str, CollabDraft] = {}
@@ -284,18 +284,20 @@ def append_segment(
         )
     # Ring holder rule remains: only current holder can append
     if draft.ring_state.current_holder_id != user_id:
-        raise PermissionError(
-            f"User {user_id} is not ring holder for draft {draft_id}"
+        raise RingRequiredError(
+            f"User {user_id} must hold the ring to append segments to draft {draft_id}"
         )
 
-    # Check idempotency
+    # Check idempotency - use composite key (draft_id:idempotency_key)
+    composite_idempotency_key = f"{draft_id}:{request.idempotency_key}"
     persistence = _get_persistence()
     if persistence:
-        if persistence.check_idempotency(request.idempotency_key):
+        is_dupe = persistence.check_idempotency(composite_idempotency_key)
+        if is_dupe:
             # Idempotent: already appended, return current state
             return draft
     else:
-        if request.idempotency_key in _idempotency_keys:
+        if composite_idempotency_key in _idempotency_keys:
             # Idempotent: already appended, return current state
             return draft
 
@@ -335,6 +337,8 @@ def append_segment(
         status=draft.status,
         segments=draft.segments + [segment],
         ring_state=draft.ring_state,
+        collaborators=draft.collaborators,
+        pending_invites=draft.pending_invites,
         created_at=draft.created_at,
         updated_at=now,
         target_publish_at=draft.target_publish_at,
@@ -343,12 +347,12 @@ def append_segment(
     # Store updated draft
     if persistence:
         persistence.append_segment(draft_id, segment)
-        persistence.record_idempotency(request.idempotency_key, scope="collab")
+        persistence.record_idempotency(composite_idempotency_key, scope="collab")
         # Reload draft to get updated state
         updated_draft = persistence.get_draft(draft_id)
     else:
         _drafts_store[draft_id] = updated_draft
-        _idempotency_keys.add(request.idempotency_key)
+        _idempotency_keys.add(composite_idempotency_key)
 
     # Phase 4.1: Emit usage event
     try:
@@ -415,7 +419,8 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
     # Check idempotency
     persistence = _get_persistence()
     if persistence:
-        if persistence.check_idempotency(request.idempotency_key):
+        is_dupe = persistence.check_idempotency(request.idempotency_key)
+        if is_dupe:
             # Idempotent: ring already passed, return current state
             return draft
     else:
@@ -442,6 +447,8 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
         status=draft.status,
         segments=draft.segments,
         ring_state=updated_ring_state,
+        collaborators=draft.collaborators,
+        pending_invites=draft.pending_invites,
         created_at=draft.created_at,
         updated_at=now,
         target_publish_at=draft.target_publish_at,
@@ -471,6 +478,54 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
     )
 
     return updated_draft
+
+
+def add_collaborator(draft_id: str, creator_user_id: str, collaborator_id: str, role: str = "contributor") -> CollabDraft:
+    """
+    Add a collaborator to a draft (creator only).
+    
+    Args:
+        draft_id: Draft UUID
+        creator_user_id: User ID of the creator (must be creator to add collaborators)
+        collaborator_id: User ID to add as collaborator
+        role: Role (e.g., "contributor", "viewer")
+    
+    Returns:
+        Updated CollabDraft
+    
+    Raises:
+        NotFoundError: If draft not found
+        PermissionError: If caller is not the creator
+    """
+    draft = get_draft(draft_id)
+    if not draft:
+        raise NotFoundError(f"Draft {draft_id} not found")
+    
+    # Only creator can add collaborators
+    if draft.creator_id != creator_user_id:
+        raise PermissionError(f"Only draft creator can add collaborators")
+    
+    # Add via persistence
+    persistence = _get_persistence()
+    if persistence:
+        persistence.add_collaborator(draft_id, collaborator_id, role)
+        # Reload draft to get updated collaborators
+        draft = persistence.get_draft(draft_id)
+    else:
+        # In-memory fallback
+        pass
+    
+    # Emit event
+    emit_event(
+        "collab.collaborator_added",
+        {
+            "draft_id": draft_id,
+            "collaborator_id": collaborator_id,
+            "role": role,
+        },
+    )
+    
+    return draft
 
 
 def generate_share_card(draft_id: str, now: Optional[datetime] = None) -> dict:

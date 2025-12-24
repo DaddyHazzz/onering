@@ -19,6 +19,7 @@ from backend.models.collab import (
     SegmentAppendRequest,
     RingPassRequest,
 )
+from backend.core.errors import RingRequiredError
 
 client = TestClient(app)
 
@@ -119,7 +120,7 @@ class TestCollabPermissions:
         append_request = SegmentAppendRequest(
             content="Unauthorized", idempotency_key=str(uuid4())
         )
-        with pytest.raises(PermissionError):
+        with pytest.raises(RingRequiredError):
             append_segment(draft.draft_id, user_a, append_request)
 
     def test_only_ring_holder_can_pass(self):
@@ -254,7 +255,7 @@ class TestCollabAPI:
         user_id = str(uuid4())
         res = client.post(
             "/v1/collab/drafts",
-            params={"user_id": user_id},
+            headers={"X-User-Id": user_id},
             json={
                 "title": "API Test",
                 "platform": "x",
@@ -286,7 +287,7 @@ class TestCollabAPI:
             )
             create_draft(user_id, request)
 
-        res = client.get("/v1/collab/drafts", params={"user_id": user_id})
+        res = client.get("/v1/collab/drafts", headers={"X-User-Id": user_id})
         assert res.status_code == 200
         data = res.json()
         assert data["count"] == 3
@@ -299,7 +300,7 @@ class TestCollabAPI:
 
         res = client.post(
             f"/v1/collab/drafts/{draft.draft_id}/segments",
-            params={"user_id": user_id},
+            headers={"X-User-Id": user_id},
             json={"content": "New segment", "idempotency_key": str(uuid4())},
         )
         assert res.status_code == 200
@@ -314,7 +315,7 @@ class TestCollabAPI:
 
         res = client.post(
             f"/v1/collab/drafts/{draft.draft_id}/pass-ring",
-            params={"user_id": user_a},
+            headers={"X-User-Id": user_a},
             json={"to_user_id": user_a, "idempotency_key": str(uuid4())},  # Pass back to owner
         )
         assert res.status_code == 200

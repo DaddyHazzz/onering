@@ -19,14 +19,14 @@ def test_permission_error_normalized():
     client = TestClient(app)
     create_resp = client.post(
         "/v1/collab/drafts",
-        params={"user_id": "owner"},
+        headers={"X-User-Id": "owner"},
         json={"title": "draft", "platform": "twitter", "initial_segment": "hi"},
     )
     draft_id = create_resp.json()["data"]["draft_id"]
 
     append_resp = client.post(
         f"/v1/collab/drafts/{draft_id}/segments",
-        params={"user_id": "other"},
+        headers={"X-User-Id": "other"},
         json={"content": "new", "idempotency_key": "k1"},
     )
     assert append_resp.status_code == 403

@@ -361,7 +361,7 @@ class DraftPersistence:
                 session.commit()
                 return True
                 
-        except Exception:
+        except Exception as e:
             return False
     
     @staticmethod

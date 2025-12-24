@@ -3,7 +3,7 @@ backend/api/collaboration.py
 Collaboration API: create drafts, append segments, pass ring.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from datetime import datetime
 from typing import Optional
 from backend.features.collaboration.service import (
@@ -12,6 +12,7 @@ from backend.features.collaboration.service import (
     list_drafts,
     append_segment,
     pass_ring,
+    add_collaborator,
     generate_share_card,
 )
 from backend.models.collab import (
@@ -19,13 +20,17 @@ from backend.models.collab import (
     SegmentAppendRequest,
     RingPassRequest,
 )
-from backend.core.errors import ValidationError, NotFoundError, PermissionError, AppError
+from backend.core.errors import ValidationError, NotFoundError, PermissionError, AppError, RingRequiredError
+from backend.core.auth import get_current_user_id
 
 router = APIRouter(prefix="/v1/collab", tags=["collaboration"])
 
 
 @router.post("/drafts")
-async def create_draft_endpoint(user_id: str, request: CollabDraftRequest):
+async def create_draft_endpoint(
+    request: CollabDraftRequest,
+    user_id: str = Depends(get_current_user_id)
+):
     """Create new collaboration draft"""
     try:
         draft = create_draft(user_id, request)
@@ -37,7 +42,7 @@ async def create_draft_endpoint(user_id: str, request: CollabDraftRequest):
 
 
 @router.get("/drafts")
-async def list_drafts_endpoint(user_id: str):
+async def list_drafts_endpoint(user_id: str = Depends(get_current_user_id)):
     """List drafts involving user"""
     drafts = list_drafts(user_id)
     return {
@@ -68,20 +73,26 @@ async def get_draft_endpoint(
 
 @router.post("/drafts/{draft_id}/segments")
 async def append_segment_endpoint(
-    draft_id: str, user_id: str, request: SegmentAppendRequest
+    draft_id: str,
+    request: SegmentAppendRequest,
+    user_id: str = Depends(get_current_user_id)
 ):
     """Append segment to draft (idempotent)"""
     try:
         draft = append_segment(draft_id, user_id, request)
         return {"data": draft.model_dump()}
-    except AppError:
+    except (AppError, RingRequiredError):
         raise
     except Exception as e:
         raise ValidationError(str(e))
 
 
 @router.post("/drafts/{draft_id}/pass-ring")
-async def pass_ring_endpoint(draft_id: str, user_id: str, request: RingPassRequest):
+async def pass_ring_endpoint(
+    draft_id: str,
+    request: RingPassRequest,
+    user_id: str = Depends(get_current_user_id)
+):
     """Pass ring to another user (idempotent)"""
     try:
         draft = pass_ring(draft_id, user_id, request)
@@ -111,6 +122,23 @@ async def get_share_card_endpoint(
             "data": share_card,
         }
     except AppError:
+        raise
+    except Exception as e:
+        raise ValidationError(str(e))
+
+
+@router.post("/drafts/{draft_id}/collaborators")
+async def add_collaborator_endpoint(
+    draft_id: str,
+    collaborator_id: str,
+    role: str = Query("contributor", description="Role: contributor|viewer"),
+    user_id: str = Depends(get_current_user_id)
+):
+    """Add collaborator to draft (creator only)"""
+    try:
+        draft = add_collaborator(draft_id, user_id, collaborator_id, role)
+        return {"data": draft.model_dump()}
+    except (AppError, PermissionError, NotFoundError):
         raise
     except Exception as e:
         raise ValidationError(str(e))
