@@ -36,7 +36,45 @@ def _get_persistence():
 
 
 def emit_event(event_type: str, payload: dict) -> None:
-    """Emit event (stub; real impl would publish to event bus)"""
+    """
+    Emit event to WebSocket hub.
+    
+    Phase 6.2: Broadcasts to all connected clients watching the draft.
+    Runs async broadcast in the background without blocking the REST response.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+    from backend.realtime.hub import hub
+    
+    # Extract draft_id from payload
+    draft_id = payload.get("draft_id")
+    if not draft_id:
+        print(f"[COLLAB EVENT] Warning: No draft_id in event payload")
+        return
+    
+    # Build WebSocket event message
+    event_message = {
+        "type": event_type,
+        "draft_id": draft_id,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "data": payload,
+    }
+    
+    # Broadcast asynchronously (don't block REST response)
+    try:
+        # Try to get the current event loop and schedule broadcast
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're in an async context, schedule as task
+            asyncio.create_task(hub.broadcast(draft_id, event_message))
+        else:
+            # Fallback: run in executor
+            loop.run_until_complete(hub.broadcast(draft_id, event_message))
+    except RuntimeError:
+        # No event loop, create one
+        asyncio.run(hub.broadcast(draft_id, event_message))
+    
+    # Log event
     print(f"[COLLAB EVENT] {event_type}: {payload}")
 
 

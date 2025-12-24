@@ -8,12 +8,24 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getDraft, appendSegment, passRing, isRingRequiredError, addCollaborator } from "@/lib/collabApi";
+import { useDraftRealtime } from "@/hooks/useDraftRealtime";
 import { CollabDraft, APIError } from "@/types/collab";
 import DraftEditor from "@/components/DraftEditor";
 import SegmentTimeline from "@/components/SegmentTimeline";
 import RingControls from "@/components/RingControls";
 import CollaboratorPanel from "@/components/CollaboratorPanel";
 import { v4 as uuidv4 } from "uuid";
+
+function RealtimeStatusBadge({ status, lastEventTs }: { status: "ws" | "polling" | "offline"; lastEventTs: string | null }) {
+  const statusDisplay = {
+    ws: { label: "🟢 Live", className: "bg-green-100 text-green-800" },
+    polling: { label: "🟡 Syncing", className: "bg-yellow-100 text-yellow-800" },
+    offline: { label: "🔴 Offline", className: "bg-red-100 text-red-800" },
+  };
+  const { label, className } = statusDisplay[status];
+  return <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${className}`}>{label}</span>;
+}
+
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -27,6 +39,27 @@ export default function DraftDetailPage() {
   const [appending, setAppending] = useState(false);
   const [passingRing, setPassingRing] = useState(false);
   const [addingCollaborator, setAddingCollaborator] = useState(false);
+
+  // Real-time synchronization
+  const { status: realtimeStatus, lastEventTs } = useDraftRealtime({
+    draftId,
+    enabled: !!draft,
+    onSegmentAdded: (segment: any) => {
+      if (draft && !draft.segments.find((s) => s.segment_id === segment.segment_id)) {
+        setDraft((prev) => prev ? { ...prev, segments: [...prev.segments, segment] } : null);
+      }
+    },
+    onRingPassed: (fromUserId: string, toUserId: string) => {
+      setDraft((prev) => prev ? { ...prev, ring_state: { ...prev.ring_state, current_holder_id: toUserId } } : null);
+    },
+    onCollaboratorAdded: (collaboratorId: string) => {
+      getDraft(draftId).then(setDraft).catch(console.error);
+    },
+    onError: (error: Error) => {
+      console.error("[draft-realtime] Error:", error);
+    },
+  });
+
 
   const isRingHolder = draft?.ring_state.current_holder_id === currentUserId;
   const isCreator = draft?.creator_id === currentUserId;
@@ -138,7 +171,10 @@ export default function DraftDetailPage() {
         <div className="lg:col-span-2 space-y-6">
           {/* Header */}
           <div className="bg-slate-800 rounded-lg border border-slate-700 p-6">
-            <h1 className="text-3xl font-bold text-white mb-2">{draft.title}</h1>
+            <div className="flex items-center justify-between mb-4">
+              <h1 className="text-3xl font-bold text-white">{draft.title}</h1>
+              <RealtimeStatusBadge status={realtimeStatus} lastEventTs={lastEventTs} />
+            </div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-sm text-gray-400">
                 Platform: <span className="text-white font-semibold">{draft.platform.toUpperCase()}</span>
