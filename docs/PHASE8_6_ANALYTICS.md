@@ -1,9 +1,55 @@
-# Phase 8.6 — Analytics Expansion ✅ COMPLETE
+# Phase 8.6 — Analytics Expansion ✅ COMPLETE (Updated Dec 25, 2025)
 
 ## Overview
 Phase 8.6 implements comprehensive analytics for collaborative drafts, providing segment-level metrics, contributor breakdown, ring dynamics tracking, and daily activity visualizations.
 
+**Completion Milestones**:
+- Phase 8.6.1: Backend service & API routes ✅
+- Phase 8.6.2: Daily analytics zero-fill contract fix ✅
+- Phase 8.6.3: AnalyticsPanel vitest tests + docs + green gates ✅
+
 ## Completed Features
+
+### Phase 8.6.3: Frontend Testing & Docs (Dec 25, 2025)
+
+#### Vitest Test Suite (`src/__tests__/analytics-panel.spec.tsx`)
+**7 Test Cases** covering:
+1. **Default Summary Tab**: Fetches summary + daily, renders metrics with accessible queries
+2. **Contributors Tab Switch**: Triggers fetch, displays contributor table rows
+3. **Ring Tab Switch**: Fetches ring data, renders current holder and recommendation
+4. **Tab-Aware Error Handling**: Error messages include tab context ("Summary analytics failed to load")
+5. **Permission Guard**: Shows warning when `isCollaborator={false}`, prevents API calls
+6. **Accessibility**: Validates tablist/tab/tabpanel ARIA roles, aria-controls associations
+7. **Error Alert Role**: Error states expose role="alert" for screen readers
+
+**Testing Patterns**:
+- Mock collabApi analytics functions with vi.mock
+- Use `getAllByText` for duplicate labels (e.g., "Contributors" appears in tab + metric)
+- Avoid asserting transient loading messages (resolve too fast in tests)
+- Use `waitFor` with API call assertions instead of UI loading text
+- Role-based queries: `screen.getByRole("tab", {name: /summary/i})`
+
+**Accessibility Enhancements** (AnalyticsPanel.tsx):
+- Tab navigation: `role="tablist"`, each tab has `role="tab"` with `id` and `aria-controls`
+- Tabpanels: `role="tabpanel"` with `id={analytics-panel-${activeTab}}` and `aria-labelledby`
+- Loading states: `aria-label="Loading state"` on spinner container
+- Error states: `role="alert"` on error banners
+- Tab-specific loading messages: "Loading summary analytics...", "Loading contributors analytics...", "Loading ring analytics..."
+- Tab-aware error messages: "${TabName} analytics failed to load: ${error.message}"
+
+#### API Endpoint Paths (Canonical)
+Backend router mounted at `/api/analytics` (via `backend/main.py` include_router with prefix):
+1. `/api/analytics/drafts/{draft_id}/summary`
+2. `/api/analytics/drafts/{draft_id}/contributors`
+3. `/api/analytics/drafts/{draft_id}/ring`
+4. `/api/analytics/drafts/{draft_id}/daily?days=14`
+
+**Daily Analytics Contract** (Phase 8.6.2 Fix):
+- **Input**: `draftId`, optional `days` (1-90, default 14)
+- **Output**: Full `days` window with zero-fill (e.g., days=14 always returns 14 DailyActivityMetrics)
+- **Bucketing**: UTC midnight (date field: "YYYY-MM-DD")
+- **Zero-Fill Logic**: Uses mutable counters, constructs models at return to avoid frozen instance mutation
+- **Backward Window**: Today minus (days - 1) through today (inclusive)
 
 ### 1. Backend Analytics Service (`backend/features/analytics/`)
 

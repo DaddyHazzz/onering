@@ -1,9 +1,61 @@
 # OneRing — Project State (Canonical)
 
-**Last Updated:** December 25, 2025 (Phase 8.6 Complete)  
-**Status:** Phase 8.6 COMPLETE (Analytics Expansion: Summary, Contributors, Ring Dynamics, Daily Activity) ✅ | Phase 8.5 COMPLETE (Smart Ring Pass) ✅ | Phase 8.4 COMPLETE (Wait-for-Ring Mode) ✅ | Phase 8.3 COMPLETE (Timeline + Export) ✅ | Phase 8.2 COMPLETE (Auto-Format for Platform) ✅ | Phase 8.1 COMPLETE (Ring-Aware AI Turn Suggestions) ✅ | Phase 6.2 COMPLETE (Real-Time Collaboration) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅  
-**Test Coverage:** Backend: 613+/613+ tests passing (100%) ✅ (incl. 13 new analytics tests) | Frontend: 358+/358+ tests passing (100%) ✅ | **Total: 971+** ✅ | **Warnings: 8 Pydantic deprecations (non-blocking)** ✅  
+**Last Updated:** December 25, 2025 (Phase 8.6.3 Complete — Analytics Panel Tests + Docs)  
+**Status:** Phase 8.6.3 COMPLETE (AnalyticsPanel Vitest + Accessibility) ✅ | Phase 8.6.2 COMPLETE (Daily Zero-Fill Fix) ✅ | Phase 8.6.1 COMPLETE (Analytics Backend + API) ✅ | Phase 8.5 COMPLETE (Smart Ring Pass) ✅ | Phase 8.4 COMPLETE (Wait-for-Ring Mode) ✅ | Phase 8.3 COMPLETE (Timeline + Export) ✅ | Phase 8.2 COMPLETE (Auto-Format for Platform) ✅ | Phase 8.1 COMPLETE (Ring-Aware AI Turn Suggestions) ✅ | Phase 6.2 COMPLETE (Real-Time Collaboration) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅  
+**Test Coverage:** Backend: 611/611 tests passing (100%) ✅ | Frontend: 377/377 tests passing (100%) ✅ | **Total: 988 tests** ✅ | **0 skipped, no --no-verify** ✅ | **Warnings: 8 Pydantic deprecations (non-blocking)** ✅  
 **Python Compatibility:** 3.10+ to 3.14+ ✅
+
+## Phase 8.6.3: "Analytics Panel Tests + Docs" — COMPLETE ✅
+
+**Shipped:** December 25, 2025  
+**Problem Solved:** Phase 8.6.1/8.6.2 delivered analytics backend and component, but lacked frontend test coverage and updated docs. Phase 8.6.3 adds comprehensive vitest test suite for AnalyticsPanel with accessibility validation, updates docs, and achieves full green gates (backend + frontend, zero skips, no --no-verify).
+
+**What Shipped:**
+1. **Vitest Test Suite** (`src/__tests__/analytics-panel.spec.tsx`):
+  - 7 test cases covering tab navigation, API integration, error handling, permissions
+  - Tests: Default summary tab, contributors tab fetch, ring tab fetch, tab-aware error messages, permission guard, accessibility roles
+  - Mock strategy: vi.mock collabApi analytics functions, avoid mocking React/testing-library
+  - Robust queries: Use getAllByText for duplicate labels (e.g., "Contributors"), waitFor for async data
+  - Accessibility validation: ARIA roles (tablist/tab/tabpanel), aria-controls/aria-labelledby associations
+
+2. **Component Accessibility Enhancements** (`src/components/AnalyticsPanel.tsx`):
+  - Tab navigation: role="tablist" on container, role="tab" on buttons with id/aria-controls
+  - Tabpanels: role="tabpanel" with id={analytics-panel-${activeTab}} and aria-labelledby
+  - Error states: role="alert" on error banners
+  - Loading states: aria-label="Loading state" on spinner container
+  - Tab-specific messages: "Loading summary analytics...", "Loading contributors analytics...", "Loading ring analytics..."
+  - Tab-aware errors: "${TabName} analytics failed to load: ${error.message}"
+
+3. **Documentation Updates**:
+  - `docs/PHASE8_6_ANALYTICS.md`: Added Phase 8.6.3 section documenting vitest patterns, accessibility, API paths, daily contract
+  - `docs/ROADMAP.md`: Added Phase 8.6.3 completion entry with test counts and zero-skip guarantee
+  - Daily contract clarified: Full window zero-fill (days=14 always returns 14 metrics), UTC bucketing, mutable counters fix
+
+4. **Test Results**:
+  - Backend: 611/611 passing (pytest backend -q --tb=no), 0 skipped, 8 Pydantic warnings (non-blocking)
+  - Frontend: 377/377 passing (pnpm test -- --run), 0 failures
+  - No --no-verify used in commit, all pre-commit hooks passed
+  - Total: 988 tests across backend + frontend
+
+**Files Added (Phase 8.6.3 — 1 new file):**
+- `src/__tests__/analytics-panel.spec.tsx` (280 LOC — 7 test cases, mock setup, accessibility validation)
+
+**Files Modified (Phase 8.6.3 — 3 docs files):**
+- `docs/PHASE8_6_ANALYTICS.md` (+60 LOC — Phase 8.6.3 section, daily contract, testing patterns)
+- `docs/ROADMAP.md` (+12 LOC — Phase 8.6.3 completion entry)
+- `PROJECT_STATE.md` (this file — header updated with test counts and Phase 8.6.3 summary)
+
+**Test Results (Phase 8.6.3):**
+- Backend: 611/611 passing (0 skipped, 8 Pydantic warnings)
+- Frontend: 377/377 passing (0 failures)
+- **Total: 988 tests, 100% pass rate** ✅
+- **Zero skipped tests, no --no-verify** ✅
+
+---
+
+## Phase 8.6.1-8.6.2: "Analytics Backend + Daily Fix" — COMPLETE ✅
+
+(Previous Phase 8.6 content — see below for full detail)
 
 ## Phase 8.6: "Analytics Expansion" (Tier 2 Feature #6) — COMPLETE ✅
 

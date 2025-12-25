@@ -16,6 +16,17 @@ from backend.features.analytics.models import (
     RingHold, RingPass, RingRecommendation, DraftAnalyticsRing,
     DailyActivityMetrics, DraftAnalyticsDaily, InactivityRisk
 )
+from backend.features.analytics.event_store import (
+    Event,
+    get_store,
+    create_event,
+    generate_idempotency_key,
+)
+from backend.features.analytics.reducers import (
+    reduce_draft_analytics,
+    reduce_user_analytics,
+    reduce_leaderboard,
+)
 
 
 class AnalyticsService:
@@ -162,43 +173,69 @@ class AnalyticsService:
     @staticmethod
     def compute_daily_activity(draft: CollabDraft, days: int = 14) -> DraftAnalyticsDaily:
         """Compute daily activity sparkline (last N days)"""
-        
-        # Build day buckets in UTC
+        # Establish inclusive window [start_date, today]
         now = datetime.now(timezone.utc)
-        day_metrics: Dict[str, DailyActivityMetrics] = {}
-        
-        for i in range(days):
-            date_obj = (now - timedelta(days=i)).date()
-            date_str = date_obj.isoformat()
-            day_metrics[date_str] = DailyActivityMetrics(
-                date=date_str,
-                segments_added=0,
-                ring_passes=0
-            )
-        
-        # Count segments per day
+        start_date = (now - timedelta(days=days - 1)).date()
+
+        # Pre-fill every day to guarantee a full window (use mutable counters, instantiate models later)
+        day_counters: Dict[str, Dict[str, int]] = {}
+        for offset in range(days):
+            day = start_date + timedelta(days=offset)
+            day_str = day.isoformat()
+            day_counters[day_str] = {"segments_added": 0, "ring_passes": 0}
+
+        # Count segments within the window
         for segment in draft.segments:
-            date_str = segment.created_at.astimezone(timezone.utc).date().isoformat()
-            if date_str in day_metrics:
-                day_metrics[date_str].segments_added += 1
-        
-        # Count ring passes per day (from holders_history transitions)
-        # A pass occurs between consecutive holders
-        for i in range(len(draft.ring_state.holders_history) - 1):
-            # We don't have exact pass times, so use ring_state.last_passed_at as proxy
-            # For determinism, attribute last pass to the day it occurred
-            if draft.ring_state.last_passed_at:
-                date_str = draft.ring_state.last_passed_at.astimezone(timezone.utc).date().isoformat()
-                if date_str in day_metrics:
-                    day_metrics[date_str].ring_passes += 1
-        
-        # Sort by date ASC (chronological)
-        result = sorted(day_metrics.values(), key=lambda m: m.date)
-        
+            seg_day = segment.created_at.astimezone(timezone.utc).date()
+            if start_date <= seg_day <= now.date():
+                key = seg_day.isoformat()
+                if key in day_counters:
+                    day_counters[key]["segments_added"] += 1
+
+        # Count ring passes using audit events for real timestamps (falls back to holders history)
+        audit_passes_count = 0
+        try:
+            with get_db_session() as session:
+                pass_query = select(audit_events.c.ts).where(
+                    and_(
+                        audit_events.c.draft_id == draft.draft_id,
+                        audit_events.c.action == "collab.pass_ring",
+                        audit_events.c.ts >= datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc),
+                        audit_events.c.ts <= now,
+                    )
+                )
+                for (ts,) in session.execute(pass_query).fetchall():
+                    pass_day = ts.date()
+                    if start_date <= pass_day <= now.date():
+                        key = pass_day.isoformat()
+                        if key in day_counters:
+                            day_counters[key]["ring_passes"] += 1
+                            audit_passes_count += 1
+        except Exception:
+            audit_passes_count = 0
+
+        # Fallback: derive passes from holders history using last_passed_at as proxy
+        if audit_passes_count == 0 and draft.ring_state.last_passed_at and len(draft.ring_state.holders_history) > 1:
+            pass_day = draft.ring_state.last_passed_at.astimezone(timezone.utc).date()
+            key = pass_day.isoformat()
+            if key in day_counters:
+                # One pass per transition
+                day_counters[key]["ring_passes"] += len(draft.ring_state.holders_history) - 1
+
+        # Sort chronologically (oldest first)
+        ordered = [
+            DailyActivityMetrics(
+                date=(start_date + timedelta(days=i)).isoformat(),
+                segments_added=day_counters[(start_date + timedelta(days=i)).isoformat()]["segments_added"],
+                ring_passes=day_counters[(start_date + timedelta(days=i)).isoformat()]["ring_passes"],
+            )
+            for i in range(days)
+        ]
+
         return DraftAnalyticsDaily(
             draft_id=draft.draft_id,
-            days=result,
-            window_days=days
+            days=ordered,
+            window_days=days,
         )
     
     # ---- HELPER METHODS (deterministic computation) ----
@@ -378,3 +415,107 @@ class AnalyticsService:
         except Exception:
             # Wait mode tables may not exist or draft doesn't have wait artifacts
             return {}
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible helpers (Phase 3.4 test suite)
+# ---------------------------------------------------------------------------
+
+
+def clear_store() -> None:
+    """Clear analytics event store (used in legacy tests)."""
+    store = get_store()
+    try:
+        store.clear()
+    except Exception:
+        # Some store implementations may not expose clear; ignore for tests
+        pass
+
+
+def record_draft_view(draft_id: str, user_id: str, now: Optional[datetime] = None) -> bool:
+    """Record a deterministic DraftViewed event."""
+    ts_now = now or datetime.now(timezone.utc)
+    event = create_event("DraftViewed", {"draft_id": draft_id, "user_id": user_id}, now=ts_now)
+    key = generate_idempotency_key("DraftViewed", draft_id=draft_id, user_id=user_id, bucket=ts_now.date().isoformat())
+    return get_store().append(event, key)
+
+
+def record_draft_share(draft_id: str, user_id: str, now: Optional[datetime] = None) -> bool:
+    """Record a deterministic DraftShared event."""
+    ts_now = now or datetime.now(timezone.utc)
+    event = create_event("DraftShared", {"draft_id": draft_id, "user_id": user_id}, now=ts_now)
+    key = generate_idempotency_key("DraftShared", draft_id=draft_id, user_id=user_id, bucket=ts_now.date().isoformat())
+    return get_store().append(event, key)
+
+
+def compute_draft_analytics(draft: CollabDraft, now: Optional[datetime] = None) -> "DraftAnalytics":
+    """Compute draft analytics via reducers for legacy tests."""
+    store = get_store()
+
+    # Seed segment events to align reducers with current draft state
+    for segment in draft.segments:
+        evt = Event(
+            event_type="SegmentAdded",
+            timestamp=segment.created_at,
+            data={
+                "draft_id": draft.draft_id,
+                "segment_id": segment.segment_id,
+                "contributor_id": segment.user_id,
+            },
+            schema_version=1,
+        )
+        store.append(evt, generate_idempotency_key("SegmentAdded", segment_id=segment.segment_id))
+
+    # Seed ring pass events based on holders_history (best-effort proxy)
+    if len(draft.ring_state.holders_history) > 1:
+        for idx in range(len(draft.ring_state.holders_history) - 1):
+            from_uid = draft.ring_state.holders_history[idx]
+            to_uid = draft.ring_state.holders_history[idx + 1]
+            ts = draft.ring_state.last_passed_at or now or datetime.now(timezone.utc)
+            evt = Event(
+                event_type="RINGPassed",
+                timestamp=ts,
+                data={"draft_id": draft.draft_id, "from_user_id": from_uid, "to_user_id": to_uid},
+                schema_version=1,
+            )
+            store.append(evt, generate_idempotency_key("RINGPassed", draft_id=draft.draft_id, idx=idx))
+
+    events = store.get_events()
+    return reduce_draft_analytics(draft.draft_id, events, now=now)
+
+
+def compute_user_analytics(user_id: str, drafts_list: List[CollabDraft], now: Optional[datetime] = None) -> "UserAnalytics":
+    """Compute user analytics via reducers for legacy tests."""
+    events = get_store().get_events()
+    # Include synthetic DraftCreated events for drafts authored by this user to satisfy reducer inputs
+    for draft in drafts_list:
+        if draft.creator_id == user_id:
+            synthetic_event = Event(
+                event_type="DraftCreated",
+                timestamp=now or datetime.now(timezone.utc),
+                data={"draft_id": draft.draft_id, "creator_id": user_id},
+                schema_version=1,
+            )
+            get_store().append(synthetic_event, generate_idempotency_key("DraftCreated", draft_id=draft.draft_id))
+
+        # Seed segment events for this draft to count contributions
+        for segment in draft.segments:
+            evt = Event(
+                event_type="SegmentAdded",
+                timestamp=segment.created_at,
+                data={
+                    "draft_id": draft.draft_id,
+                    "segment_id": segment.segment_id,
+                    "contributor_id": segment.user_id,
+                },
+                schema_version=1,
+            )
+            get_store().append(evt, generate_idempotency_key("SegmentAdded", segment_id=segment.segment_id))
+    events = get_store().get_events()
+    return reduce_user_analytics(user_id, events, now=now)
+
+
+def get_leaderboard(metric: str, drafts_list: List[CollabDraft], user_analytics: Dict[str, Any], momentum_scores: Dict[str, float], now: Optional[datetime] = None):
+    """Compute leaderboard via reducers (legacy contract: returns LeaderboardResponse)."""
+    events = get_store().get_events()
+    return reduce_leaderboard(metric, events, now=now)

@@ -213,8 +213,6 @@ class TestDraftAnalyticsRing:
 
 class TestDraftAnalyticsDaily:
     """Tests for /drafts/{draft_id}/daily endpoint"""
-    
-    @pytest.mark.skip(reason="Daily activity endpoint - needs quota bypass in tests")
     def test_daily_activity_default_14_days(self):
         """Should return 14 days by default"""
         draft_id = create_test_draft_with_collaboration()
@@ -231,9 +229,8 @@ class TestDraftAnalyticsDaily:
         assert data["window_days"] == 14
         assert "daily" in data or "days" in data  # Should have daily activity
         activity_list = data.get("daily") or data.get("days", [])
-        assert len(activity_list) <= 14  # Should not exceed 14 days
+        assert len(activity_list) == 14  # Should include full window, zero-filled
     
-    @pytest.mark.skip(reason="Daily activity endpoint - needs quota bypass in tests")
     def test_daily_activity_custom_days(self):
         """Should support custom day range (1-90)"""
         draft_id = create_test_draft_with_collaboration()
@@ -248,7 +245,7 @@ class TestDraftAnalyticsDaily:
             data = resp.json()
             assert data["window_days"] == days
             activity_list = data.get("daily") or data.get("days", [])
-            assert len(activity_list) <= days  # Should not exceed requested days
+            assert len(activity_list) == days  # Zero-filled to requested window
     
     def test_daily_activity_invalid_range(self):
         """Should reject days outside 1-90"""
@@ -262,7 +259,6 @@ class TestDraftAnalyticsDaily:
             
             assert resp.status_code == 422  # Validation error
     
-    @pytest.mark.skip(reason="Daily activity endpoint - needs quota bypass in tests")
     def test_daily_activity_structure(self):
         """Should have proper day structure with metrics"""
         draft_id = create_test_draft_with_collaboration()

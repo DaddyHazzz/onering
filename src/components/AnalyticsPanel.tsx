@@ -11,15 +11,12 @@
 
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   DraftAnalyticsSummary,
   DraftAnalyticsContributors,
   DraftAnalyticsRing,
   DraftAnalyticsDaily,
-  ContributorMetrics,
-  RingHold,
-  RingPass,
   InactivityRisk,
 } from "@/types/collab";
 import {
@@ -42,14 +39,16 @@ const INACTIVITY_RISK_COLORS: Record<InactivityRisk, string> = {
   high: "bg-red-100 text-red-800",
 };
 
-function formatSeconds(seconds: number): string {
+function formatSeconds(seconds: number | null): string {
+  if (seconds === null) return "—";
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
 
-function formatDate(isoString: string): string {
+function formatDate(isoString: string | null | undefined): string {
+  if (!isoString) return "—";
   const d = new Date(isoString);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
@@ -73,13 +72,19 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const hoursSinceLastActivity = useMemo(() => {
+    if (!summary?.last_activity_ts) return null;
+    const diffMs = Date.now() - new Date(summary.last_activity_ts).getTime();
+    return Math.floor(diffMs / 1000 / 3600);
+  }, [summary]);
+
   useEffect(() => {
     loadData();
   }, [draftId, activeTab]);
 
   useEffect(() => {
     if (activeTab === "summary") loadDaily();
-  }, [dailyDays]);
+  }, [dailyDays, activeTab]);
 
   async function loadData() {
     if (!isCollaborator) {
@@ -89,10 +94,17 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
 
     setLoading(true);
     setError(null);
+    const tabLabel =
+      activeTab === "summary"
+        ? "Summary"
+        : activeTab === "contributors"
+          ? "Contributors"
+          : "Ring";
     try {
       if (activeTab === "summary") {
         const data = await getDraftAnalyticsSummary(draftId);
         setSummary(data);
+        await loadDaily();
       } else if (activeTab === "contributors") {
         const data = await getDraftAnalyticsContributors(draftId);
         setContributors(data);
@@ -101,7 +113,7 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
         setRing(data);
       }
     } catch (err: any) {
-      setError(err.message || "Failed to load analytics");
+      setError(`${tabLabel} analytics failed to load: ${err.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -124,13 +136,15 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
     const riskColor = INACTIVITY_RISK_COLORS[summary.inactivity_risk];
 
     return (
-      <div className="p-4 space-y-6">
+      <div className="p-4 space-y-6" role="region" aria-label="Summary analytics">
         {/* Inactivity Risk Badge */}
         <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg">
           <div>
             <p className="text-sm font-medium text-gray-700">Inactivity Risk</p>
             <p className="text-xs text-gray-600 mt-1">
-              {summary.hours_since_last_activity}h since last activity
+              {hoursSinceLastActivity !== null
+                ? `${hoursSinceLastActivity}h since last activity`
+                : "No activity yet"}
             </p>
           </div>
           <span className={`px-3 py-1 rounded-full text-sm font-medium capitalize ${riskColor}`}>
@@ -166,6 +180,7 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-medium text-gray-700">Daily Activity (last {dailyDays} days)</h3>
               <select
+                aria-label="Select daily window"
                 value={dailyDays}
                 onChange={(e) => setDailyDays(parseInt(e.target.value))}
                 className="text-xs px-2 py-1 border rounded"
@@ -176,10 +191,10 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
               </select>
             </div>
             <div className="space-y-2">
-              {daily.daily.slice(0, 5).map((day) => (
+              {daily.days.slice(0, 5).map((day) => (
                 <div key={day.date} className="flex items-center gap-3">
                   <div className="w-20 text-xs text-gray-600">{new Date(day.date).toLocaleDateString()}</div>
-                  <div className="flex-1 bg-gray-200 rounded h-5">
+                  <div className="flex-1 bg-gray-200 rounded h-5" aria-label={`Activity on ${day.date}`}>
                     <div
                       className="bg-blue-500 h-full rounded"
                       style={{
@@ -187,8 +202,8 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
                       }}
                     />
                   </div>
-                  <div className="w-16 text-xs text-gray-600 text-right">
-                    +{day.segments_added}seg, {day.ring_passes}pass
+                  <div className="w-20 text-xs text-gray-600 text-right">
+                    +{day.segments_added} seg • {day.ring_passes} pass
                   </div>
                 </div>
               ))}
@@ -220,13 +235,11 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
             {contributors.contributors.map((contributor) => (
               <tr key={contributor.user_id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium text-gray-900">{contributor.user_id}</td>
-                <td className="px-4 py-3 text-right text-gray-600">{contributor.segments_count}</td>
-                <td className="px-4 py-3 text-right text-gray-600">{contributor.words_count}</td>
+                <td className="px-4 py-3 text-right text-gray-600">{contributor.segments_added_count}</td>
+                <td className="px-4 py-3 text-right text-gray-600">{contributor.words_added}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{contributor.ring_holds_count}</td>
                 <td className="px-4 py-3 text-right text-gray-600 text-xs">
-                  {contributor.last_contribution_at
-                    ? formatDate(contributor.last_contribution_at)
-                    : "—"}
+                  {formatDate(contributor.last_contribution_ts)}
                 </td>
               </tr>
             ))}
@@ -245,11 +258,11 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
       <div className="p-4 space-y-6">
         {/* Current Ring Holder */}
         {ring.holds.length > 0 && (
-          <div className="bg-amber-50 border-l-4 border-amber-500 p-4">
+          <div className="bg-amber-50 border-l-4 border-amber-500 p-4" aria-label="Current ring holder">
             <p className="text-xs font-medium text-amber-700 uppercase">Currently Holding the Ring</p>
-            <p className="text-lg font-bold text-amber-900 mt-2">{ring.holds[0].holder_id}</p>
+            <p className="text-lg font-bold text-amber-900 mt-2">{ring.holds[0].user_id}</p>
             <p className="text-xs text-amber-700 mt-1">
-              Held for {formatSeconds(ring.holds[0].hold_duration_seconds)}
+              Held for {formatSeconds(ring.holds[0].seconds)}
             </p>
           </div>
         )}
@@ -258,8 +271,8 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
         {ring.recommendation && (
           <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg">
             <p className="text-sm font-medium text-blue-900">Recommended Next Holder</p>
-            <p className="text-lg font-bold text-blue-600 mt-2">{ring.recommendation.recommended_user_id}</p>
-            <p className="text-xs text-blue-700 mt-1">{ring.recommendation.reasoning}</p>
+            <p className="text-lg font-bold text-blue-600 mt-2">{ring.recommendation.recommended_to_user_id}</p>
+            <p className="text-xs text-blue-700 mt-1">{ring.recommendation.reason}</p>
           </div>
         )}
 
@@ -271,14 +284,13 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
               {ring.holds.slice(0, 10).map((hold, idx) => (
                 <div key={idx} className="flex items-center justify-between bg-gray-50 p-3 rounded">
                   <div>
-                    <p className="font-medium text-gray-900">{hold.holder_id}</p>
+                    <p className="font-medium text-gray-900">{hold.user_id}</p>
                     <p className="text-xs text-gray-600">
-                      {hold.start_at ? formatDate(hold.start_at) : "—"} to{" "}
-                      {hold.end_at ? formatDate(hold.end_at) : "Present"}
+                      {formatDate(hold.start_ts)} to {hold.end_ts ? formatDate(hold.end_ts) : "Present"}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-medium text-gray-900">{formatSeconds(hold.hold_duration_seconds)}</p>
+                    <p className="font-medium text-gray-900">{formatSeconds(hold.seconds)}</p>
                   </div>
                 </div>
               ))}
@@ -294,9 +306,9 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
               {ring.passes.slice(0, 5).map((pass, idx) => (
                 <div key={idx} className="flex items-center justify-between bg-gray-50 p-3 rounded text-xs">
                   <p className="text-gray-700">
-                    {pass.passed_by_id} → {pass.passed_to_id}
+                    {pass.from_user_id} → {pass.to_user_id}
                   </p>
-                  <p className="text-gray-600">{pass.passed_at ? formatDate(pass.passed_at) : "—"}</p>
+                  <p className="text-gray-600">{formatDate(pass.ts)}</p>
                 </div>
               ))}
             </div>
@@ -316,38 +328,58 @@ export default function AnalyticsPanel({ draftId, isCollaborator }: AnalyticsPan
     );
   }
 
+  const loadingMessage =
+    activeTab === "summary"
+      ? "Loading summary analytics..."
+      : activeTab === "contributors"
+        ? "Loading contributors analytics..."
+        : "Loading ring analytics...";
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       {/* Tabs */}
-      <div className="flex gap-0 border-b">
-        {(["summary", "contributors", "ring"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab
-                ? "border-blue-500 text-blue-600 bg-blue-50"
-                : "border-transparent text-gray-700 hover:text-gray-900"
-            }`}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
+      <div className="flex gap-0 border-b" role="tablist" aria-label="Analytics tabs">
+        {(["summary", "contributors", "ring"] as const).map((tab) => {
+          const tabId = `analytics-tab-${tab}`;
+          const panelId = `analytics-panel-${tab}`;
+          return (
+            <button
+              key={tab}
+              role="tab"
+              id={tabId}
+              aria-controls={panelId}
+              aria-selected={activeTab === tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab
+                  ? "border-blue-500 text-blue-600 bg-blue-50"
+                  : "border-transparent text-gray-700 hover:text-gray-900"
+              }`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          );
+        })}
       </div>
 
       {/* Content */}
-      <div className="relative min-h-[400px]">
+      <div
+        className="relative min-h-[400px]"
+        id={`analytics-panel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`analytics-tab-${activeTab}`}
+      >
         {error && (
-          <div className="p-4 bg-red-50 border-b border-red-200">
+          <div className="p-4 bg-red-50 border-b border-red-200" role="alert">
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
         {loading ? (
-          <div className="p-8 flex items-center justify-center">
+          <div className="p-8 flex items-center justify-center" aria-label="Loading state">
             <div className="text-center">
               <div className="animate-spin w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-3" />
-              <p className="text-sm text-gray-600">Loading analytics...</p>
+              <p className="text-sm text-gray-600">{loadingMessage}</p>
             </div>
           </div>
         ) : (

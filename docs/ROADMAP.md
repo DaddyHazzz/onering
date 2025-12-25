@@ -23,3 +23,14 @@ Phase 8.4.1 "GREEN ALWAYS" Patch
 - Added backend Wait Mode API tests (notes, suggestions, votes)
 - Fixed frontend export/format tests and UI accessibility
 - All suites green: Backend 600+, Frontend 350+
+
+✅ Phase 8.6 "ANALYTICS EXPANSION" — COMPLETE (Dec 25, 2025)
+**Phase 8.6.1**: Backend analytics service + API routes (summary, contributors, ring, daily)
+**Phase 8.6.2**: Daily analytics zero-fill contract fix (deterministic UTC bucketing)
+**Phase 8.6.3**: AnalyticsPanel vitest tests + accessibility + docs
+- 7 vitest tests covering tab navigation, error states, permissions, accessibility
+- ARIA roles: tablist/tab/tabpanel with proper associations
+- Tab-aware loading/error messages
+- All gates green: Backend 611 passed, Frontend 377 passed
+- Zero skipped tests, no --no-verify
+- Docs: docs/PHASE8_6_ANALYTICS.md updated
