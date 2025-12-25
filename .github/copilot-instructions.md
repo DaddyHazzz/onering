@@ -2,6 +2,30 @@
 
 # OneRing — Copilot Instructions
 
+## ⚡ Phase 8.8+ Quick Start (Updated Dec 25, 2025)
+
+All canonical documentation now lives under **.ai/**:
+- .ai/README.md — index
+- .ai/PROJECT_CONTEXT.md — what this is, stack, non-goals
+- .ai/ARCHITECTURE.md — system design
+- .ai/API_REFERENCE.md — endpoints and contracts
+- .ai/TESTING.md — fast vs full gates, commands
+- .ai/DECISIONS.md — constraints and patterns
+- .ai/PROJECT_STATE.md — current status, test counts
+
+**Test commands** (Windows-friendly PowerShell):
+```bash
+pnpm gate                    # Fast lane (changed-only)
+pnpm gate -Full             # Full suites
+pnpm test:api              # Backend only
+pnpm test:ui:changed       # Frontend changed-only
+```
+
+**GREEN ALWAYS Policy**: All work results in all tests passing, zero skipped, no `--no-verify` commits.
+Update .ai/PROJECT_STATE.md with date and counts when complete.
+
+---
+
 ## Purpose
 Short, actionable guidance for all AI agents (Grok, ChatGPT, Gemini, GitHub Copilot, etc.) to become highly productive in this repo and maintain alignment across all model interactions.
 

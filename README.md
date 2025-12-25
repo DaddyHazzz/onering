@@ -1,4 +1,12 @@
-﻿# OneRing � Agentic Content Generation & Multi-Platform Posting
+﻿# OneRing
+
+Note: Canonical project documentation now lives under .ai/. Start here:
+- .ai/README.md — index of canonical docs
+- .ai/PROJECT_CONTEXT.md — purpose, stack, non-goals
+- .ai/ARCHITECTURE.md — system overview
+- .ai/API_REFERENCE.md — endpoints and contracts
+- .ai/TESTING.md — fast vs full gates, commands
+# OneRing � Agentic Content Generation & Multi-Platform Posting
 
 **OneRing** is a full-stack agentic content system that generates viral social media content, posts across multiple platforms (X, Instagram, TikTok, YouTube), and rewards creators with a native RING token. Built with Next.js 16, FastAPI, LangGraph, and Stripe.
 

@@ -1,4 +1,7 @@
-# OneRing API Reference
+# OneRing API Reference (Moved)
+
+Note: This file is legacy. Use the canonical version under .ai/:
+- .ai/API_REFERENCE.md
 
 ## Auth
 **POST /api/auth/signup**

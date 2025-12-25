@@ -1,4 +1,6 @@
-# OneRing System Architecture
+# OneRing System Architecture (Moved)
+
+Note: Canonical architecture lives at .ai/ARCHITECTURE.md. This legacy file may be stale.
 
 ## Overview
 OneRing is an agentic AI content platform built as a distributed multi-service system:

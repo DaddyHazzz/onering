@@ -11,7 +11,13 @@
     "test:ui": "vitest --ui",
     "test:watch": "vitest --watch",
     "typecheck": "next lint && tsc -p tsconfig.json --noEmit",
-    "test:all": "pnpm test -- --run && python -m pytest backend/tests -q"
+    "test:all": "pnpm test -- --run && python -m pytest backend/tests -q",
+    "test:api": "python -m pytest backend/tests -q",
+    "test:api:file": "python -m pytest -q",
+    "test:api:changed": "python scripts/test_changed.py",
+    "test:ui:file": "vitest run",
+    "test:ui:changed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vitest-changed.ps1",
+    "gate": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gate.ps1"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.77",
