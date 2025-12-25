@@ -19,6 +19,7 @@ from backend.features.insights.models import (
 )
 from backend.features.analytics.service import AnalyticsService
 from backend.features.analytics.models import DraftAnalyticsSummary, DraftAnalyticsContributors
+from backend.features.collaboration.service import get_draft
 
 
 class InsightEngine:
@@ -55,9 +56,14 @@ class InsightEngine:
         if now is None:
             now = datetime.now(timezone.utc)
         
+        # Fetch draft
+        draft = get_draft(draft_id, compute_metrics_flag=False, now=now)
+        if not draft:
+            raise ValueError(f"Draft {draft_id} not found")
+        
         # Fetch analytics
-        summary = self.analytics_service.compute_draft_summary(draft_id)
-        contributors = self.analytics_service.compute_contributors(draft_id)
+        summary = self.analytics_service.compute_draft_summary(draft)
+        contributors = self.analytics_service.compute_contributors(draft)
         
         # Derive insights
         insights = self._derive_insights(summary, contributors, now)
@@ -66,7 +72,7 @@ class InsightEngine:
         recommendations = self._generate_recommendations(summary, contributors, insights)
         
         # Compute alerts
-        alerts = self._compute_alerts(summary, now)
+        alerts = self._compute_alerts(draft, summary, now)
         
         return DraftInsightsResponse(
             draft_id=draft_id,
@@ -118,7 +124,7 @@ class InsightEngine:
         if not summary.last_activity_ts:
             return True  # No activity ever
         
-        last_activity = datetime.fromisoformat(summary.last_activity_ts.replace("Z", "+00:00"))
+        last_activity = summary.last_activity_ts
         hours_since = (now - last_activity).total_seconds() / 3600
         return hours_since >= self.STALLED_HOURS
     
@@ -129,7 +135,7 @@ class InsightEngine:
     ) -> DraftInsight:
         """Create stalled insight."""
         if summary.last_activity_ts:
-            last_activity = datetime.fromisoformat(summary.last_activity_ts.replace("Z", "+00:00"))
+            last_activity = summary.last_activity_ts
             hours_since = int((now - last_activity).total_seconds() / 3600)
         else:
             hours_since = 0
@@ -313,8 +319,33 @@ class InsightEngine:
         
         return sorted_contributors[0].user_id
     
+    def _current_holder_hold_seconds(self, draft, now: datetime) -> float:
+        """
+        Compute how long the current ring holder has been holding the ring.
+        
+        Uses ring_state.passed_at as the start time (set at draft creation or last pass).
+        Works correctly even with zero ring passes.
+        
+        Args:
+            draft: CollabDraft with ring_state
+            now: Current time for deterministic computation
+        
+        Returns:
+            Hold duration in seconds (always >= 0)
+        """
+        if not draft.ring_state or not draft.ring_state.passed_at:
+            # Fallback to draft creation if ring state is missing
+            start_ts = draft.created_at
+        else:
+            # Use ring_state.passed_at (updated on every pass, initialized at creation)
+            start_ts = draft.ring_state.passed_at
+        
+        hold_seconds = (now - start_ts).total_seconds()
+        return max(0, hold_seconds)
+    
     def _compute_alerts(
         self,
+        draft,
         summary: DraftAnalyticsSummary,
         now: datetime
     ) -> list[DraftAlert]:
@@ -327,7 +358,7 @@ class InsightEngine:
         
         # Alert: No activity in ALERT_NO_ACTIVITY_HOURS
         if summary.last_activity_ts:
-            last_activity = datetime.fromisoformat(summary.last_activity_ts.replace("Z", "+00:00"))
+            last_activity = summary.last_activity_ts
             hours_since = (now - last_activity).total_seconds() / 3600
             
             if hours_since >= self.ALERT_NO_ACTIVITY_HOURS:
@@ -341,19 +372,19 @@ class InsightEngine:
                     )
                 )
         
-        # Alert: Long ring hold (if avg hold time > threshold)
-        if summary.avg_time_holding_ring_seconds:
-            avg_hold_hours = summary.avg_time_holding_ring_seconds / 3600
-            if avg_hold_hours >= self.ALERT_LONG_HOLD_HOURS:
-                alerts.append(
-                    DraftAlert(
-                        alert_type=AlertType.LONG_RING_HOLD,
-                        triggered_at=now,
-                        threshold=f"Average ring hold > {self.ALERT_LONG_HOLD_HOURS}h",
-                        current_value=avg_hold_hours,
-                        reason=f"Average hold time is {avg_hold_hours:.1f}h (alert threshold: {self.ALERT_LONG_HOLD_HOURS}h). Consider more frequent ring passes."
-                    )
+        # Alert: Long ring hold (current holder holding > threshold)
+        current_hold_seconds = self._current_holder_hold_seconds(draft, now)
+        current_hold_hours = current_hold_seconds / 3600
+        if current_hold_hours >= self.ALERT_LONG_HOLD_HOURS:
+            alerts.append(
+                DraftAlert(
+                    alert_type=AlertType.LONG_RING_HOLD,
+                    triggered_at=now,
+                    threshold=f"Ring held > {self.ALERT_LONG_HOLD_HOURS}h",
+                    current_value=round(current_hold_hours, 2),
+                    reason=f"Current holder has held the ring for {current_hold_hours:.1f}h (alert threshold: {self.ALERT_LONG_HOLD_HOURS}h). Consider passing the ring."
                 )
+            )
         
         # Alert: Single contributor (if only 1 contributor and >5 segments)
         if summary.unique_contributors == 1 and summary.total_segments >= 5:

@@ -32,7 +32,7 @@ describe("InsightsPanel", () => {
       () => new Promise(() => {}) // Never resolves
     );
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
     
     expect(screen.getByText(/loading insights/i)).toBeInTheDocument();
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -58,7 +58,7 @@ describe("InsightsPanel", () => {
 
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText("Draft is Stalled")).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe("InsightsPanel", () => {
 
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText("Dominant Contributor")).toBeInTheDocument();
@@ -121,7 +121,7 @@ describe("InsightsPanel", () => {
 
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText("Healthy Collaboration")).toBeInTheDocument();
@@ -145,10 +145,11 @@ describe("InsightsPanel", () => {
       computed_at: new Date().toISOString()
     };
 
-    vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
-    vi.mocked(collabApi.passRing).mockResolvedValue({ success: true } as any);
+    const mockOnSmartPass = vi.fn().mockResolvedValue({ to_user_id: "user2", reason: "Most inactive user" });
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
+
+    render(<InsightsPanel draftId={mockDraftId} onSmartPass={mockOnSmartPass} />);
 
     await waitFor(() => {
       expect(screen.getByText("Pass the Ring")).toBeInTheDocument();
@@ -163,13 +164,7 @@ describe("InsightsPanel", () => {
     fireEvent.click(passButton);
     
     await waitFor(() => {
-      expect(collabApi.passRing).toHaveBeenCalledWith(
-        mockDraftId,
-        expect.objectContaining({
-          to_user_id: "user2",
-          idempotency_key: expect.stringMatching(/pass_ring_/)
-        })
-      );
+      expect(mockOnSmartPass).toHaveBeenCalledWith("most_inactive");
     });
   });
 
@@ -188,9 +183,11 @@ describe("InsightsPanel", () => {
       computed_at: new Date().toISOString()
     };
 
+    const mockOnInvite = vi.fn().mockResolvedValue(undefined);
+
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} onInvite={mockOnInvite} />);
 
     await waitFor(() => {
       expect(screen.getByText("Invite Collaborator")).toBeInTheDocument();
@@ -199,6 +196,18 @@ describe("InsightsPanel", () => {
 
     const inviteButton = screen.getByRole("button", { name: /invite user to collaborate/i });
     expect(inviteButton).toBeInTheDocument();
+    
+    // Mock prompt
+    const originalPrompt = global.prompt;
+    global.prompt = vi.fn().mockReturnValue("user3");
+    
+    fireEvent.click(inviteButton);
+    
+    await waitFor(() => {
+      expect(mockOnInvite).toHaveBeenCalledWith("user3");
+    });
+    
+    global.prompt = originalPrompt;
   });
 
   it("renders no activity alert", async () => {
@@ -220,7 +229,7 @@ describe("InsightsPanel", () => {
 
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText("No Recent Activity")).toBeInTheDocument();
@@ -251,7 +260,7 @@ describe("InsightsPanel", () => {
 
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText("Solo Contributor")).toBeInTheDocument();
@@ -270,7 +279,7 @@ describe("InsightsPanel", () => {
 
     vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText(/all good! no insights to report/i)).toBeInTheDocument();
@@ -281,7 +290,7 @@ describe("InsightsPanel", () => {
   it("renders error state", async () => {
     vi.mocked(collabApi.getDraftInsights).mockRejectedValue(new Error("Forbidden"));
 
-    render(<InsightsPanel draftId={mockDraftId} currentUserId={mockUserId} />);
+    render(<InsightsPanel draftId={mockDraftId} />);
 
     await waitFor(() => {
       expect(screen.getByText("Forbidden")).toBeInTheDocument();
@@ -312,12 +321,16 @@ describe("InsightsPanel", () => {
     vi.mocked(collabApi.passRing).mockResolvedValue({ success: true } as any);
 
     const onRefresh = vi.fn();
+    const onSmartPass = vi.fn().mockResolvedValue({ to_user_id: "user2", reason: "Most inactive" });
+    
+    // Mock window.alert to prevent jsdom error
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
 
     render(
       <InsightsPanel 
         draftId={mockDraftId} 
-        currentUserId={mockUserId} 
         onRefresh={onRefresh}
+        onSmartPass={onSmartPass}
       />
     );
 
@@ -331,5 +344,7 @@ describe("InsightsPanel", () => {
     await waitFor(() => {
       expect(onRefresh).toHaveBeenCalled();
     });
+    
+    alertSpy.mockRestore();
   });
 });

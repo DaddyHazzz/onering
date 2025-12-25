@@ -3,10 +3,13 @@ Phase 8.7: Insights API
 
 REST endpoints for draft insights, recommendations, and alerts.
 All endpoints are read-only and collaborator-restricted.
+
+Phase 8.7.1: Added optional 'now' query parameter for deterministic testing.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
-from typing import Annotated
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
+from typing import Annotated, Optional
+from datetime import datetime
 from backend.features.insights.service import InsightEngine
 from backend.features.insights.models import DraftInsightsResponse
 from backend.features.analytics.service import AnalyticsService
@@ -25,22 +28,26 @@ def get_insight_engine() -> InsightEngine:
 @router.get("/drafts/{draft_id}", response_model=DraftInsightsResponse)
 async def get_draft_insights(
     draft_id: str,
-    user_id: str,  # From auth middleware
-    insight_engine: Annotated[InsightEngine, Depends(get_insight_engine)]
+    user_id: Annotated[str, Header(alias="X-User-Id")],
+    insight_engine: Annotated[InsightEngine, Depends(get_insight_engine)],
+    now: Optional[str] = Query(None, description="Optional ISO timestamp for deterministic testing")
 ) -> DraftInsightsResponse:
     """
     Get insights, recommendations, and alerts for a draft.
     
     **Access:** Collaborators only (creator + invited collaborators)
     
+    **Query Params:**
+    - now (optional): ISO timestamp for deterministic testing (default: current time)
+    
     **Returns:**
     - insights: List of derived insights (stalled, healthy, etc.)
     - recommendations: Actionable suggestions (pass_ring, invite_user)
     - alerts: Threshold-based warnings
     
-    **Deterministic:** Same draft state always produces same insights.
+    **Deterministic:** Same draft state + same 'now' always produces same insights.
     """
-    with start_span("get_draft_insights", draft_id=draft_id):
+    with start_span("get_draft_insights", attributes={"draft_id": draft_id}):
         # Access control: Collaborators only
         try:
             draft = get_draft(draft_id)
@@ -53,9 +60,17 @@ async def get_draft_insights(
                 detail="Only collaborators can view draft insights"
             )
         
+        # Parse optional 'now' parameter for deterministic testing
+        now_dt = None
+        if now:
+            try:
+                now_dt = datetime.fromisoformat(now)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid 'now' timestamp format. Use ISO 8601.")
+        
         # Compute insights
         try:
-            insights_response = insight_engine.compute_draft_insights(draft_id)
+            insights_response = insight_engine.compute_draft_insights(draft_id, now=now_dt)
             return insights_response
         except Exception as e:
             raise HTTPException(

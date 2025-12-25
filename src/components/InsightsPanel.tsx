@@ -9,22 +9,24 @@
  * - Actionable recommendations with one-click buttons (pass ring, invite user)
  * - Alerts (no activity, long hold, single contributor)
  * - Accessible keyboard navigation and screen reader support
+ * 
+ * Phase 8.7.1: Integrated into draft page with real action callbacks.
  */
 
 "use client";
 
 import { useState, useEffect } from "react";
-import { DraftInsightsResponse, DraftInsight, DraftRecommendation, DraftAlert } from "@/types/collab";
+import { DraftInsightsResponse, DraftInsight, DraftRecommendation, DraftAlert, SmartPassStrategy } from "@/types/collab";
 import { getDraftInsights } from "@/lib/collabApi";
-import { passRing, addCollaborator } from "@/lib/collabApi";
 
 interface InsightsPanelProps {
   draftId: string;
-  currentUserId: string;
   onRefresh?: () => void;
+  onSmartPass?: (strategy: SmartPassStrategy) => Promise<{ to_user_id: string; reason: string }>;
+  onInvite?: (collaboratorId: string) => Promise<void>;
 }
 
-export default function InsightsPanel({ draftId, currentUserId, onRefresh }: InsightsPanelProps) {
+export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvite }: InsightsPanelProps) {
   const [insights, setInsights] = useState<DraftInsightsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,14 +50,17 @@ export default function InsightsPanel({ draftId, currentUserId, onRefresh }: Ins
   }, [draftId]);
 
   const handlePassRing = async (targetUserId: string) => {
+    if (!onSmartPass) {
+      alert("Smart pass not available");
+      return;
+    }
+    
     setActionLoading(`pass_ring_${targetUserId}`);
     try {
-      await passRing(draftId, {
-        to_user_id: targetUserId,
-        idempotency_key: `pass_ring_${Date.now()}_${Math.random()}`
-      });
+      const result = await onSmartPass("most_inactive");
       await loadInsights();
       onRefresh?.();
+      alert(`Ring passed to ${result.to_user_id}: ${result.reason}`);
     } catch (err: any) {
       alert(err.message || "Failed to pass ring");
     } finally {
@@ -64,15 +69,20 @@ export default function InsightsPanel({ draftId, currentUserId, onRefresh }: Ins
   };
 
   const handleInviteUser = async () => {
-    const email = prompt("Enter email address to invite:");
-    if (!email) return;
+    if (!onInvite) {
+      alert("Invite not available");
+      return;
+    }
+    
+    const collaboratorId = prompt("Enter collaborator ID to invite:");
+    if (!collaboratorId) return;
     
     setActionLoading("invite_user");
     try {
-      // TODO: Wire up invite endpoint when ready
-      alert(`Invite sent to ${email} (feature coming soon)`);
+      await onInvite(collaboratorId);
       await loadInsights();
       onRefresh?.();
+      alert(`Invited ${collaboratorId} successfully`);
     } catch (err: any) {
       alert(err.message || "Failed to invite user");
     } finally {

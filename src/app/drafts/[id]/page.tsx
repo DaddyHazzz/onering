@@ -1,6 +1,7 @@
 /**
  * Draft detail page: /drafts/[id]
  * Shows draft editor with ring-based edit locking.
+ * Phase 8.7.1: Added Insights tab with InsightsPanel integration.
  */
 
 "use client";
@@ -15,6 +16,7 @@ import AISuggestionsPanel from "@/components/AISuggestionsPanel";
 import SegmentTimeline from "@/components/SegmentTimeline";
 import RingControls from "@/components/RingControls";
 import CollaboratorPanel from "@/components/CollaboratorPanel";
+import InsightsPanel from "@/components/InsightsPanel";
 import { v4 as uuidv4 } from "uuid";
 
 function RealtimeStatusBadge({ status, lastEventTs }: { status: "ws" | "polling" | "offline"; lastEventTs: string | null }) {
@@ -42,6 +44,7 @@ export default function DraftDetailPage() {
   const [passingRing, setPassingRing] = useState(false);
   const [smartPassing, setSmartPassing] = useState(false);
   const [addingCollaborator, setAddingCollaborator] = useState(false);
+  const [activeTab, setActiveTab] = useState<"editor" | "insights">("editor");
 
   // Real-time synchronization
   const { status: realtimeStatus, lastEventTs } = useDraftRealtime({
@@ -170,6 +173,16 @@ export default function DraftDetailPage() {
     }
   };
 
+  const handleRefreshInsights = async () => {
+    // Refresh draft data to trigger insights panel reload
+    try {
+      const updated = await getDraft(draftId);
+      setDraft(updated);
+    } catch (err: any) {
+      console.error("Failed to refresh insights:", err);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-8">
@@ -215,6 +228,32 @@ export default function DraftDetailPage() {
             </div>
           </div>
 
+          {/* Tab Navigation */}
+          <div className="bg-slate-800 rounded-lg border border-slate-700 p-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setActiveTab("editor")}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  activeTab === "editor"
+                    ? "bg-slate-700 text-white"
+                    : "text-gray-400 hover:text-white hover:bg-slate-700/50"
+                }`}
+              >
+                📝 Editor
+              </button>
+              <button
+                onClick={() => setActiveTab("insights")}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  activeTab === "insights"
+                    ? "bg-slate-700 text-white"
+                    : "text-gray-400 hover:text-white hover:bg-slate-700/50"
+                }`}
+              >
+                💡 Insights
+              </button>
+            </div>
+          </div>
+
           {/* Error messages */}
           {error && (
             <div className="p-4 bg-red-500/20 border border-red-500 rounded-lg text-red-300">
@@ -228,23 +267,35 @@ export default function DraftDetailPage() {
             </div>
           )}
 
-          {/* Editor */}
-          <DraftEditor
-            draft={draft}
-            isRingHolder={isRingHolder}
-            onAppendSegment={handleAppendSegment}
-            isAppending={appending}
-          />
+          {/* Tab Content */}
+          {activeTab === "editor" ? (
+            <>
+              {/* Editor */}
+              <DraftEditor
+                draft={draft}
+                isRingHolder={isRingHolder}
+                onAppendSegment={handleAppendSegment}
+                isAppending={appending}
+              />
 
-          <AISuggestionsPanel
-            draft={draft}
-            isRingHolder={isRingHolder}
-            isAuthenticated={isAuthenticated}
-            onInsertSegment={handleAppendSegment}
-          />
+              <AISuggestionsPanel
+                draft={draft}
+                isRingHolder={isRingHolder}
+                isAuthenticated={isAuthenticated}
+                onInsertSegment={handleAppendSegment}
+              />
 
-          {/* Segments timeline */}
-          <SegmentTimeline segments={draft.segments} />
+              {/* Segments timeline */}
+              <SegmentTimeline segments={draft.segments} />
+            </>
+          ) : (
+            <InsightsPanel
+              draftId={draftId}
+              onRefresh={handleRefreshInsights}
+              onSmartPass={handleSmartPass}
+              onInvite={handleAddCollaborator}
+            />
+          )}
         </div>
 
         {/* Sidebar: Ring controls + collaborators */}

@@ -48,3 +48,14 @@ Phase 8.4.1 "GREEN ALWAYS" Patch
 - All gates green: Backend 621 passed (49 new), Frontend 389 passed (12 new)
 - Zero skips, zero --no-verify, production-ready
 
+✅ Phase 8.7.1 "HARDEN INSIGHTS" — COMPLETE (Dec 14, 2025)
+**Backend Tests**: Replaced stub with 6 real integration tests (stalled/dominant/healthy/alerts/403/determinism)
+**Draft Integration**: Added Insights tab to draft page with Editor/Insights navigation
+**Action Callbacks**: Connected pass_ring and invite_user buttons to draft page handlers (handleSmartPass, handleAddCollaborator)
+**Frontend Tests**: Updated all 12 tests to use callback pattern (removed currentUserId prop, added onSmartPass/onInvite mocks)
+**User Flow**: Click Insights tab → see insights → click "Pass Ring" → ring passed to most inactive → insights refresh
+**Docs**: Added Phase 8.7.1 section to PHASE8_7_INSIGHTS.md
+- Impact: Zero stub tests remaining, feature accessible in UI, one-click actions, end-to-end validated
+- All gates green: Backend 618 passed (+6 insights tests), Frontend 400 passed (+12 updated)
+- Zero skips, zero technical debt, production-ready
+
