@@ -95,3 +95,54 @@ model StakingPosition {
   @@index([status])
   @@map("staking_positions")
 }
+
+model RingLedger {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  draftId       String?   @map("draft_id")
+  requestId     String?   @map("request_id")
+  receiptId     String?   @map("receipt_id")
+  eventType     String    @map("event_type") // EARN, SPEND, PENALTY, ADJUSTMENT
+  reasonCode    String    @map("reason_code")
+  amount        Int
+  balanceAfter  Int       @map("balance_after")
+  metadata      Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([eventType])
+  @@index([requestId])
+  @@map("ring_ledger")
+}
+
+model RingPending {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  draftId       String?   @map("draft_id")
+  requestId     String?   @map("request_id")
+  amount        Int
+  reasonCode    String    @map("reason_code")
+  metadata      Json      @default("{}")
+  wouldIssueAt  DateTime  @default(now()) @map("would_issue_at")
+  status        String    @default("pending") // pending, issued, expired
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([status])
+  @@map("ring_pending")
+}
+
+model RingGuardrailsState {
+  id              String    @id @default(uuid())
+  userId          String    @unique @map("user_id")
+  dailyEarnCount  Int       @default(0) @map("daily_earn_count")
+  dailyEarnTotal  Int       @default(0) @map("daily_earn_total")
+  lastEarnAt      DateTime? @map("last_earn_at")
+  anomalyFlags    Json      @default("{}") @map("anomaly_flags")
+  resetAt         DateTime  @default(now()) @map("reset_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("ring_guardrails_state")
+}
