@@ -61,6 +61,32 @@ describe("MonitoringPage enforcement panel", () => {
     },
   };
 
+  const tokenRecentResponse = {
+    items: [
+      {
+        event_id: "evt-1",
+        user_id: "user-1",
+        platform: "x",
+        enforcement_request_id: "req-1",
+        enforcement_receipt_id: "rec-1",
+        token_issued_amount: 10,
+        token_reason_code: "ISSUED",
+        created_at: "2025-12-26T00:10:00Z",
+      },
+    ],
+  };
+
+  const tokenMetricsResponse = {
+    window_hours: 24,
+    metrics: {
+      total_issued: 10,
+      total_pending: 5,
+      blocked_issuance: 1,
+      top_reason_codes: { ISSUED: 1, PENDING: 1 },
+      p90_issuance_latency_ms: 150,
+    },
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -83,6 +109,18 @@ describe("MonitoringPage enforcement panel", () => {
           json: async () => metricsResponse,
         } as any;
       }
+      if (url.includes("/api/monitoring/tokens/recent")) {
+        return {
+          ok: true,
+          json: async () => tokenRecentResponse,
+        } as any;
+      }
+      if (url.includes("/api/monitoring/tokens/metrics")) {
+        return {
+          ok: true,
+          json: async () => tokenMetricsResponse,
+        } as any;
+      }
       return { ok: false, json: async () => ({}) } as any;
     });
   });
@@ -95,22 +133,27 @@ describe("MonitoringPage enforcement panel", () => {
     render(<MonitoringPage />);
 
     await waitFor(() => expect(screen.getByText("Enforcement Monitoring")).toBeInTheDocument());
+    const enforcementSection = screen.getByText("Enforcement Monitoring").closest("div") as HTMLElement;
 
     const qaCard = screen.getByText("QA_BLOCKED (24h)").parentElement as HTMLElement;
     expect(within(qaCard).getByText("1")).toBeInTheDocument();
     const receiptCard = screen.getByText("RECEIPT_REQUIRED (24h)").parentElement as HTMLElement;
     expect(within(receiptCard).getByText("2")).toBeInTheDocument();
 
-    expect(await screen.findByText("req-1")).toBeInTheDocument();
-    expect(await screen.findByText("req-2")).toBeInTheDocument();
+    expect(await within(enforcementSection).findByText("req-1")).toBeInTheDocument();
+    expect(await within(enforcementSection).findByText("req-2")).toBeInTheDocument();
     expect(screen.getAllByTestId("copy-request-id").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByTestId("copy-receipt-id").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Token Monitoring")).toBeInTheDocument();
+    expect(await screen.findByText("evt-1")).toBeInTheDocument();
+    expect(screen.getAllByTestId("copy-event-id").length).toBeGreaterThanOrEqual(1);
   });
 
   it("filters by status, mode, and request id", async () => {
     render(<MonitoringPage />);
 
     await waitFor(() => expect(screen.getByText("Enforcement Monitoring")).toBeInTheDocument());
+    const enforcementSection = screen.getByText("Enforcement Monitoring").closest("div") as HTMLElement;
 
     const statusSelect = screen.getByTestId("filter-status");
     const modeSelect = screen.getByTestId("filter-mode");
@@ -121,8 +164,8 @@ describe("MonitoringPage enforcement panel", () => {
     fireEvent.change(searchInput, { target: { value: "req-2" } });
 
     await waitFor(() => {
-      expect(screen.getByText("req-2")).toBeInTheDocument();
-      expect(screen.queryByText("req-1")).not.toBeInTheDocument();
+      expect(within(enforcementSection).getByText("req-2")).toBeInTheDocument();
+      expect(within(enforcementSection).queryByText("req-1")).not.toBeInTheDocument();
     });
   });
 });

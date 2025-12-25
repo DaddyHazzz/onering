@@ -27,3 +27,7 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 - Ensure `audit_agent_decisions` exists before enabling `ONERING_ENFORCEMENT_MODE=advisory|enforced`.
 - Recommended preflight:
   - `python -c "from backend.core.database import create_all_tables; create_all_tables()"` on deployment host.
+
+## Phase 10.2 Publish Integration
+- Ensure `publish_events` exists before enabling token issuance modes.
+- If using manual migrations, run `create_all_tables()` after deploying updated metadata.

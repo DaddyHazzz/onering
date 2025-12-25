@@ -374,6 +374,18 @@ Notes:
   - Posts a thread to X (Twitter)
   - Splits on newlines; chains replies; rate-limited 5 per 15m
   - Returns: { urls: string[] }
+  - Optional (Phase 10.2): on success includes `token_result`
+    ```json
+    {
+      "token_result": {
+        "mode": "shadow|live|off",
+        "issued_amount": 0,
+        "pending_amount": 10,
+        "reason_code": "PENDING",
+        "guardrails_applied": []
+      }
+    }
+    ```
   - Optional (Phase 10.1): accepts `enforcement` payload from generation; enforced mode
     blocks publishing unless a valid QA receipt is provided.
   - Enforced mode requires one of:
@@ -392,6 +404,13 @@ Notes:
     - `ENFORCEMENT_RECEIPT_EXPIRED`
     - `AUDIT_WRITE_FAILED`
 
+## Tokens (Phase 10.2)
+
+- POST /v1/tokens/publish
+  - Persist publish event and issue tokens if eligible.
+  - Body: { event_id, user_id, platform, content_hash, published_at?, platform_post_id?, enforcement_request_id?, enforcement_receipt_id?, metadata? }
+  - Returns: { ok: true, event_id, token_result }
+
 ## Monitoring (internal)
 
 - GET /v1/monitoring/enforcement/recent
@@ -399,6 +418,12 @@ Notes:
   - Returns: { items: [{ request_id, receipt_id, mode, qa_status, violation_codes_count, audit_ok, created_at, expires_at, latency_ms, last_error_code, last_error_at }] }
 - GET /v1/monitoring/enforcement/metrics
   - Returns: { window_hours: 24, metrics: { qa_blocked, enforcement_receipt_required, enforcement_receipt_expired, audit_write_failed, policy_error, p90_latency_ms } }
+
+- GET /v1/monitoring/tokens/recent
+  - Query: `limit` (default 50, max 200), `since` (ISO8601)
+  - Returns: { items: [{ event_id, platform, enforcement_request_id, enforcement_receipt_id, token_issued_amount, token_pending_amount, token_reason_code, token_ledger_id, token_pending_id, created_at }] }
+- GET /v1/monitoring/tokens/metrics
+  - Returns: { window_hours: 24, metrics: { total_issued, total_pending, blocked_issuance, top_reason_codes, p90_issuance_latency_ms } }
 
 ## Audit Retention (ops)
 

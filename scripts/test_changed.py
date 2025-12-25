@@ -60,7 +60,8 @@ def run_backend(test_targets: list[str]) -> int:
 def run_frontend(test_files: list[str]) -> int:
     if not test_files:
         return 0
-    cmd = ["pnpm", "vitest", "run", *test_files]
+    pnpm_cmd = "pnpm.cmd" if os.name == "nt" else "pnpm"
+    cmd = [pnpm_cmd, "vitest", "run", *test_files]
     print("Running:", " ".join(cmd))
     return subprocess.call(cmd)
 

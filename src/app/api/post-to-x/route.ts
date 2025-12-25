@@ -1,5 +1,6 @@
 // src/app/api/post-to-x/route.ts
 import { NextRequest } from "next/server";
+import crypto from "crypto";
 import { TwitterApi } from "twitter-api-v2";
 import { z } from "zod";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
@@ -43,8 +44,6 @@ const success = (payload: Record<string, unknown>, status = 200) =>
 const failure = (error: string, status = 500, extra: Record<string, unknown> = {}) =>
   Response.json({ success: false, error, ...extra }, { status });
 
-const ENFORCEMENT_MODE = process.env.ONERING_ENFORCEMENT_MODE || "off";
-
 async function validateEnforcementReceipt(
   requestId?: string,
   receiptId?: string
@@ -68,6 +67,47 @@ async function validateEnforcementReceipt(
     return { ok: true, receipt: payload.receipt };
   } catch (error: any) {
     return { ok: false, code: "RECEIPT_LOOKUP_FAILED", message: error?.message || "Receipt lookup failed" };
+  }
+}
+
+async function emitPublishEvent(params: {
+  userId: string;
+  platform: string;
+  content: string;
+  platformPostId: string;
+  enforcementRequestId?: string;
+  enforcementReceiptId?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ ok: boolean; token_result?: Record<string, unknown> }> {
+  const hex = crypto
+    .createHash("sha256")
+    .update(`${params.userId}:${params.platform}:${params.platformPostId}`)
+    .digest("hex");
+  const eventId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+  const contentHash = crypto.createHash("sha256").update(params.content).digest("hex");
+  try {
+    const res = await fetch(`${BACKEND_URL}/v1/tokens/publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_id: eventId,
+        user_id: params.userId,
+        platform: params.platform,
+        content_hash: contentHash,
+        published_at: new Date().toISOString(),
+        platform_post_id: params.platformPostId,
+        enforcement_request_id: params.enforcementRequestId,
+        enforcement_receipt_id: params.enforcementReceiptId,
+        metadata: params.metadata || {},
+      }),
+    });
+    const payload = await res.json();
+    if (!payload?.ok) {
+      return { ok: false };
+    }
+    return { ok: true, token_result: payload.token_result };
+  } catch (error) {
+    return { ok: false };
   }
 }
 
@@ -135,6 +175,7 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; remai
 
 export async function POST(req: NextRequest) {
   try {
+    const enforcementMode = process.env.ONERING_ENFORCEMENT_MODE || "off";
     const caller = await currentUser();
     const userId = caller?.id;
     console.log("[post-to-x] currentUser:", userId);
@@ -146,13 +187,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { content, enforcement, enforcement_request_id, enforcement_receipt_id } = schema.parse(body);
     const enforcementWarnings: string[] = [];
+    let enforcementRequestId: string | undefined = enforcement_request_id || enforcement?.request_id;
+    let enforcementReceiptId: string | undefined = enforcement_receipt_id || enforcement?.receipt?.receipt_id;
 
-    if (ENFORCEMENT_MODE !== "off") {
-      const receiptId = enforcement_receipt_id || enforcement?.receipt?.receipt_id;
-      const requestId = enforcement_request_id || enforcement?.request_id;
+    if (enforcementMode !== "off") {
+      const receiptId = enforcementReceiptId;
+      const requestId = enforcementRequestId;
 
       if (!receiptId && !requestId) {
-        if (ENFORCEMENT_MODE === "enforced") {
+        if (enforcementMode === "enforced") {
           return failure("Enforcement receipt required", 400, {
             code: "ENFORCEMENT_RECEIPT_REQUIRED",
             suggestedFix: "Regenerate content with enforcement enabled and pass enforcement_request_id to posting.",
@@ -163,7 +206,7 @@ export async function POST(req: NextRequest) {
       } else {
         const receiptCheck = await validateEnforcementReceipt(requestId, receiptId);
         if (!receiptCheck.ok) {
-          if (ENFORCEMENT_MODE === "enforced") {
+          if (enforcementMode === "enforced") {
             const suggestedFix =
               receiptCheck.code === "AUDIT_WRITE_FAILED"
                 ? "Ensure audit tables are created before enabling enforced mode."
@@ -178,7 +221,7 @@ export async function POST(req: NextRequest) {
           }
           enforcementWarnings.push("ENFORCEMENT_RECEIPT_INVALID");
         } else if (receiptCheck.receipt.qa_status !== "PASS") {
-          if (ENFORCEMENT_MODE === "enforced") {
+          if (enforcementMode === "enforced") {
             return failure("QA blocked publishing", 403, {
               code: "QA_BLOCKED",
               suggestedFix: "Resolve required edits and regenerate content through the enforcement pipeline.",
@@ -200,7 +243,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (ENFORCEMENT_MODE === "advisory" && enforcementWarnings.length) {
+    if (enforcementMode === "advisory" && enforcementWarnings.length) {
       console.warn("[post-to-x] enforcement warnings:", enforcementWarnings);
     }
 
@@ -324,12 +367,16 @@ export async function POST(req: NextRequest) {
       console.warn("[post-to-x] streak notify failed (non-blocking):", notifyErr?.message || notifyErr);
     }
 
+    let tokenResult: Record<string, unknown> | null = null;
+
     // Write to database and update Clerk metadata
     try {
+      const tokenIssuanceMode = process.env.ONERING_TOKEN_ISSUANCE || "off";
       // Ensure user exists in Postgres
       let dbUser = await prisma.user.findUnique({
         where: { clerkId: userId },
       });
+      const createdUser = !dbUser;
 
       if (!dbUser) {
         // Create user if doesn't exist
@@ -340,14 +387,55 @@ export async function POST(req: NextRequest) {
           },
         });
         console.log("[post-to-x] created new user in DB:", dbUser.id);
+      }
+
+      const publishResult = await emitPublishEvent({
+        userId,
+        platform: "x",
+        content,
+        platformPostId: previousTweetId,
+        enforcementRequestId,
+        enforcementReceiptId,
+        metadata: {
+          rate_limit_remaining: rateLimitCheck.remaining,
+          rate_limit_retry_after: rateLimitCheck.retryAfter,
+          thread_size: lines.length,
+        },
+      });
+      if (publishResult.ok && publishResult.token_result) {
+        tokenResult = publishResult.token_result;
       } else {
-        // Increment ring balance
+        tokenResult = {
+          mode: process.env.ONERING_TOKEN_ISSUANCE || "off",
+          issued_amount: 0,
+          pending_amount: 0,
+          reason_code: "TOKEN_ISSUANCE_FAILED",
+          guardrails_applied: [],
+        };
+      }
+
+      const tokenMode = typeof tokenResult?.mode === "string" ? tokenResult.mode : tokenIssuanceMode;
+      const issuedAmount = typeof tokenResult?.issued_amount === "number" ? tokenResult.issued_amount : 0;
+      const pendingAmount = typeof tokenResult?.pending_amount === "number" ? tokenResult.pending_amount : 0;
+      const ringEarned = tokenMode === "off"
+        ? 50
+        : tokenMode === "shadow"
+        ? pendingAmount
+        : issuedAmount;
+
+      if (tokenMode === "off" && !createdUser) {
+        // Increment ring balance only when token issuance is off (legacy behavior).
         dbUser = await prisma.user.update({
           where: { id: dbUser.id },
           data: {
             ringBalance: { increment: 50 },
           },
         });
+      } else if (tokenMode === "live") {
+        const refreshed = await prisma.user.findUnique({ where: { id: dbUser.id } });
+        if (refreshed) {
+          dbUser = refreshed;
+        }
       }
 
       // Create post record in database
@@ -357,7 +445,7 @@ export async function POST(req: NextRequest) {
           platform: "X",
           content: content.slice(0, 280),
           externalId: previousTweetId,
-          ringEarned: 50,
+          ringEarned,
           status: "published",
         },
       });
@@ -378,7 +466,7 @@ export async function POST(req: NextRequest) {
         console.warn("[post-to-x] thread embedding skipped:", embedErr.message);
       }
 
-      console.log("[post-to-x] recorded post in DB for user:", dbUser.id, { ringBalance: dbUser.ringBalance });
+      console.log("[post-to-x] recorded post in DB for user:", dbUser.id, { ringBalance: dbUser.ringBalance, ringEarned });
 
       // Also sync to Clerk metadata for fallback
       try {
@@ -393,7 +481,7 @@ export async function POST(req: NextRequest) {
           time: new Date().toISOString(),
           views: Math.floor(Math.random() * 1000),
           likes: Math.floor(Math.random() * 200),
-          ringEarned: 50,
+          ringEarned,
         };
         posts.unshift(postObj);
         const newMeta = { ...meta, posts, ring: dbUser.ringBalance };
@@ -409,6 +497,7 @@ export async function POST(req: NextRequest) {
     return success({
       url,
       remaining: rateLimitCheck.remaining,
+      ...(tokenResult ? { token_result: tokenResult } : {}),
       ...(enforcementWarnings.length ? { warnings: enforcementWarnings } : {}),
     });
   } catch (error: any) {

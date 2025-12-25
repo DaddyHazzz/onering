@@ -160,6 +160,7 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 - **RING Decay:** 1% monthly on holdings >10K (encourages circulation)
 - **Lifetime Cap:** 1,000,000 RING per user (prevents unchecked accumulation)
 - **Audit Trail:** Append-only PostgreSQL table logs all RING transactions immutably
+- **Publish Events:** Canonical publish_events table linking enforcement receipts to ledger entries
 - **Anti-Gaming:** Sybil detection heuristics, dynamic rate limits (5/10/15 posts per 15min)
 
 **Agent Integration:**
@@ -183,6 +184,13 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 - Zero unaccounted RING in circulation (audit queries pass)
 - < 1% of users attempt gaming behaviors
 - RING staking adoption rate > 20% of active users within 30 days
+
+**Gates (Shadow -> Live):**
+1. Shadow mode (>=72h): pending vs expected issuance within 1% error
+2. Enforcement receipt pass rate > 95% with no audit_write_failed spikes
+3. Duplicate issuance rate < 0.1% (publish_event_id idempotency)
+4. p90 issuance latency < 500ms
+5. Live flip checklist signed by Platform + Finance owners
 
 **See:** [PHASE_10_MASTER_PLAN.md Part C](PHASE_10_MASTER_PLAN.md#part-c-token-loop-activation-design-phase-102) for detailed token economics
 

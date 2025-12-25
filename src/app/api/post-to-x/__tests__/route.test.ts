@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const currentUserMock = vi.fn();
+const currentUserMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@clerk/nextjs/server", () => ({
   auth: () => ({ userId: null }),
@@ -15,6 +15,21 @@ vi.mock("@/lib/embeddings", () => ({
   cosineSimilarity: vi.fn(() => 0),
 }));
 
+const prismaMock = vi.hoisted(() => ({
+  user: {
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
+  post: {
+    create: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/db", () => ({
+  prisma: prismaMock,
+}));
+
 vi.mock("ioredis", () => ({
   default: class RedisMock {
     on = vi.fn();
@@ -23,6 +38,15 @@ vi.mock("ioredis", () => ({
     zrange = vi.fn(async () => []);
     zadd = vi.fn(async () => 1);
     expire = vi.fn(async () => 1);
+  },
+}));
+
+vi.mock("twitter-api-v2", () => ({
+  TwitterApi: class TwitterApiMock {
+    v2 = {
+      me: vi.fn(async () => ({ data: { id: "me" } })),
+      tweet: vi.fn(async () => ({ data: { id: "tweet-1" } })),
+    };
   },
 }));
 
@@ -35,6 +59,10 @@ describe("POST /api/post-to-x", () => {
     currentUserMock.mockResolvedValue(null);
     process.env = { ...originalEnv };
     vi.restoreAllMocks();
+    prismaMock.user.findUnique.mockResolvedValue({ id: "db-user", ringBalance: 0 });
+    prismaMock.user.create.mockResolvedValue({ id: "db-user", ringBalance: 0 });
+    prismaMock.user.update.mockResolvedValue({ id: "db-user", ringBalance: 50 });
+    prismaMock.post.create.mockResolvedValue({ id: "post-1" });
   });
 
   afterEach(() => {
@@ -70,12 +98,16 @@ describe("POST /api/post-to-x", () => {
   it("enforced mode blocks when receipt indicates FAIL", async () => {
     process.env.ONERING_ENFORCEMENT_MODE = "enforced";
     currentUserMock.mockResolvedValue({ id: "user-1" });
-    global.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({ ok: false, code: "ENFORCEMENT_RECEIPT_INVALID", message: "invalid" }),
-        { status: 200 }
-      )
-    ) as any;
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/v1/enforcement/receipts/validate")) {
+        return new Response(
+          JSON.stringify({ ok: false, code: "ENFORCEMENT_RECEIPT_INVALID", message: "invalid" }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 500 });
+    }) as any;
 
     const req = new NextRequest("http://localhost/api/post-to-x", {
       method: "POST",
@@ -89,15 +121,52 @@ describe("POST /api/post-to-x", () => {
     expect(body.code).toBe("ENFORCEMENT_RECEIPT_INVALID");
   });
 
+  it("enforced mode blocks when receipt expired", async () => {
+    process.env.ONERING_ENFORCEMENT_MODE = "enforced";
+    currentUserMock.mockResolvedValue({ id: "user-1" });
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/v1/enforcement/receipts/validate")) {
+        return new Response(
+          JSON.stringify({ ok: false, code: "ENFORCEMENT_RECEIPT_EXPIRED", message: "expired" }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 500 });
+    }) as any;
+
+    const req = new NextRequest("http://localhost/api/post-to-x", {
+      method: "POST",
+      body: JSON.stringify({ content: "test content", enforcement_request_id: "rid-1" }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe("ENFORCEMENT_RECEIPT_EXPIRED");
+    expect(body.suggestedFix).toBeDefined();
+  });
+
   it("enforced mode allows when receipt PASS", async () => {
     process.env.ONERING_ENFORCEMENT_MODE = "enforced";
     currentUserMock.mockResolvedValue({ id: "user-1" });
-    global.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({ ok: true, receipt: { qa_status: "PASS" } }),
-        { status: 200 }
-      )
-    ) as any;
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/v1/enforcement/receipts/validate")) {
+        return new Response(
+          JSON.stringify({ ok: true, receipt: { qa_status: "PASS" } }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/v1/tokens/publish")) {
+        return new Response(
+          JSON.stringify({ ok: true, token_result: { mode: "shadow", pending_amount: 10 } }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 500 });
+    }) as any;
 
     const req = new NextRequest("http://localhost/api/post-to-x", {
       method: "POST",
@@ -109,6 +178,47 @@ describe("POST /api/post-to-x", () => {
 
     expect(res.status).toBe(500);
     expect(body.error).toMatch(/Twitter credentials not configured/);
+  });
+
+  it("success response includes token_result when publish event succeeds", async () => {
+    process.env.ONERING_ENFORCEMENT_MODE = "enforced";
+    process.env.TWITTER_API_KEY = "key";
+    process.env.TWITTER_API_SECRET = "secret";
+    process.env.TWITTER_ACCESS_TOKEN = "token";
+    process.env.TWITTER_ACCESS_TOKEN_SECRET = "token-secret";
+    process.env.TWITTER_USERNAME = "tester";
+    currentUserMock.mockResolvedValue({ id: "user-1" });
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/v1/enforcement/receipts/validate")) {
+        return new Response(
+          JSON.stringify({ ok: true, receipt: { qa_status: "PASS" } }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/v1/tokens/publish")) {
+        return new Response(
+          JSON.stringify({ ok: true, token_result: { mode: "shadow", pending_amount: 10 } }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/v1/streaks/events/post")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as any;
+
+    const req = new NextRequest("http://localhost/api/post-to-x", {
+      method: "POST",
+      body: JSON.stringify({ content: "test content", enforcement_request_id: "rid-1" }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.token_result).toBeDefined();
+    expect(body.token_result.mode).toBe("shadow");
   });
 
   it("advisory mode allows missing receipt but includes warning", async () => {

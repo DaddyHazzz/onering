@@ -51,6 +51,8 @@ def run_reconciliation(db: Session) -> Dict:
     
     mismatches = []
     adjustments = []
+    publish_missing = []
+    publish_duplicates = []
     
     for user_id in user_ids:
         # Sum ledger entries
@@ -122,6 +124,54 @@ def run_reconciliation(db: Session) -> Dict:
                     "adjustment": adjustment_amount,
                     "applied": True,
                 })
+
+    # Publish event reconciliation (idempotency + missing issuance)
+    try:
+        publish_rows = db.execute(
+            text(
+                """
+                SELECT id, token_mode, token_ledger_id, token_pending_id
+                FROM publish_events
+                WHERE token_mode IN ('shadow', 'live')
+                """
+            )
+        ).fetchall()
+        for row in publish_rows:
+            event_id, token_mode, ledger_id, pending_id = row
+            if token_mode == "live" and not ledger_id:
+                publish_missing.append({"event_id": str(event_id), "reason": "ledger_missing"})
+            if token_mode == "shadow" and not pending_id:
+                publish_missing.append({"event_id": str(event_id), "reason": "pending_missing"})
+
+        duplicate_ledger_rows = db.execute(
+            text(
+                """
+                SELECT metadata->>'publish_event_id' AS event_id, COUNT(*)
+                FROM ring_ledger
+                WHERE metadata ? 'publish_event_id'
+                GROUP BY metadata->>'publish_event_id'
+                HAVING COUNT(*) > 1
+                """
+            )
+        ).fetchall()
+        for row in duplicate_ledger_rows:
+            publish_duplicates.append({"event_id": row[0], "count": int(row[1]), "source": "ring_ledger"})
+
+        duplicate_pending_rows = db.execute(
+            text(
+                """
+                SELECT metadata->>'publish_event_id' AS event_id, COUNT(*)
+                FROM ring_pending
+                WHERE metadata ? 'publish_event_id'
+                GROUP BY metadata->>'publish_event_id'
+                HAVING COUNT(*) > 1
+                """
+            )
+        ).fetchall()
+        for row in duplicate_pending_rows:
+            publish_duplicates.append({"event_id": row[0], "count": int(row[1]), "source": "ring_pending"})
+    except Exception:
+        publish_missing.append({"event_id": "unknown", "reason": "publish_events_unavailable"})
     
     return {
         "status": "completed",
@@ -130,6 +180,8 @@ def run_reconciliation(db: Session) -> Dict:
         "mismatches_found": len(mismatches),
         "mismatches": mismatches,
         "adjustments": adjustments,
+        "publish_missing": publish_missing,
+        "publish_duplicates": publish_duplicates,
         "reconciled_at": datetime.utcnow().isoformat(),
     }
 

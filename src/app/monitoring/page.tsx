@@ -47,6 +47,37 @@ interface EnforcementMetrics {
   };
 }
 
+interface TokenRecord {
+  event_id: string;
+  user_id: string;
+  platform: string;
+  published_at?: string | null;
+  platform_post_id?: string | null;
+  enforcement_request_id?: string | null;
+  enforcement_receipt_id?: string | null;
+  qa_status?: string | null;
+  audit_ok?: boolean;
+  token_mode?: string | null;
+  token_issued_amount?: number | null;
+  token_pending_amount?: number | null;
+  token_reason_code?: string | null;
+  token_ledger_id?: string | null;
+  token_pending_id?: string | null;
+  issuance_latency_ms?: number | null;
+  created_at?: string | null;
+}
+
+interface TokenMetrics {
+  window_hours: number;
+  metrics: {
+    total_issued: number;
+    total_pending: number;
+    blocked_issuance: number;
+    top_reason_codes: Record<string, number>;
+    p90_issuance_latency_ms?: number | null;
+  };
+}
+
 export default function MonitoringPage() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
@@ -54,6 +85,8 @@ export default function MonitoringPage() {
   const [traces, setTraces] = useState<AgentTrace[]>([]);
   const [enforcementRecords, setEnforcementRecords] = useState<EnforcementRecord[]>([]);
   const [enforcementMetrics, setEnforcementMetrics] = useState<EnforcementMetrics | null>(null);
+  const [tokenRecords, setTokenRecords] = useState<TokenRecord[]>([]);
+  const [tokenMetrics, setTokenMetrics] = useState<TokenMetrics | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [modeFilter, setModeFilter] = useState("all");
   const [auditOnly, setAuditOnly] = useState(false);
@@ -67,9 +100,11 @@ export default function MonitoringPage() {
       // In production: const isAdmin = user.publicMetadata?.role === 'admin'
       fetchStats();
       fetchEnforcement();
+      fetchTokens();
       const interval = setInterval(() => {
         fetchStats();
         fetchEnforcement();
+        fetchTokens();
       }, 10000); // Refresh every 10s
       return () => clearInterval(interval);
     } else if (isLoaded && !user) {
@@ -106,6 +141,25 @@ export default function MonitoringPage() {
       }
     } catch (error) {
       console.error("[monitoring] enforcement fetch error:", error);
+    }
+  };
+
+  const fetchTokens = async () => {
+    try {
+      const [recentRes, metricsRes] = await Promise.all([
+        fetch("/api/monitoring/tokens/recent?limit=100"),
+        fetch("/api/monitoring/tokens/metrics"),
+      ]);
+      const recentData = await recentRes.json();
+      const metricsData = await metricsRes.json();
+      if (recentRes.ok) {
+        setTokenRecords(recentData.items || []);
+      }
+      if (metricsRes.ok) {
+        setTokenMetrics(metricsData);
+      }
+    } catch (error) {
+      console.error("[monitoring] token fetch error:", error);
     }
   };
 
@@ -379,6 +433,135 @@ export default function MonitoringPage() {
                       <td className="py-2 text-xs text-red-200">
                         {record.last_error_at ? new Date(record.last_error_at).toLocaleString() : "n/a"}
                       </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Token Monitoring */}
+        <div className="mt-12 bg-white/10 backdrop-blur-xl rounded-3xl p-10 shadow-2xl border border-white/20">
+          <h2 className="text-3xl font-bold mb-6">Token Monitoring</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">Total Issued (24h)</div>
+              <div className="text-2xl font-bold">{tokenMetrics?.metrics.total_issued ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">Total Pending (24h)</div>
+              <div className="text-2xl font-bold">{tokenMetrics?.metrics.total_pending ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">Blocked Issuance (24h)</div>
+              <div className="text-2xl font-bold">{tokenMetrics?.metrics.blocked_issuance ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">p90 Issuance Latency</div>
+              <div className="text-2xl font-bold">
+                {tokenMetrics?.metrics.p90_issuance_latency_ms ?? "N/A"}
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold mb-2">Top Reason Codes (24h)</h3>
+            {tokenMetrics?.metrics.top_reason_codes && Object.keys(tokenMetrics.metrics.top_reason_codes).length ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {Object.entries(tokenMetrics.metrics.top_reason_codes).map(([code, count]) => (
+                  <div key={code} className="bg-black/40 rounded-lg p-3 border border-white/10 text-sm">
+                    <div className="text-gray-400">{code}</div>
+                    <div className="text-xl font-bold">{count}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-gray-400 text-sm">No reason code data yet.</div>
+            )}
+          </div>
+
+          {tokenRecords.length === 0 ? (
+            <div className="text-gray-400 text-sm py-6">No token publish events.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-gray-400">
+                  <tr>
+                    <th className="py-2">Created</th>
+                    <th className="py-2">Platform</th>
+                    <th className="py-2">Event</th>
+                    <th className="py-2">Request</th>
+                    <th className="py-2">Receipt</th>
+                    <th className="py-2">Ledger</th>
+                    <th className="py-2">Pending</th>
+                    <th className="py-2">Issued</th>
+                    <th className="py-2">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tokenRecords.map((record, idx) => (
+                    <tr key={`${record.event_id}-${idx}`} className="border-t border-white/10">
+                      <td className="py-2 text-xs text-gray-300">
+                        {record.created_at ? new Date(record.created_at).toLocaleString() : "n/a"}
+                      </td>
+                      <td className="py-2">{record.platform?.toUpperCase() || "N/A"}</td>
+                      <td className="py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{record.event_id}</span>
+                          <button
+                            type="button"
+                            data-testid="copy-event-id"
+                            onClick={() => navigator.clipboard.writeText(record.event_id || "")}
+                            className="rounded bg-white/10 px-2 py-0.5 text-xs"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{record.enforcement_request_id || "n/a"}</span>
+                          <button
+                            type="button"
+                            data-testid="copy-token-request-id"
+                            onClick={() => navigator.clipboard.writeText(record.enforcement_request_id || "")}
+                            className="rounded bg-white/10 px-2 py-0.5 text-xs"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{record.enforcement_receipt_id || "n/a"}</span>
+                          <button
+                            type="button"
+                            data-testid="copy-token-receipt-id"
+                            onClick={() => navigator.clipboard.writeText(record.enforcement_receipt_id || "")}
+                            className="rounded bg-white/10 px-2 py-0.5 text-xs"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{record.token_ledger_id || "n/a"}</span>
+                          <button
+                            type="button"
+                            data-testid="copy-token-ledger-id"
+                            onClick={() => navigator.clipboard.writeText(record.token_ledger_id || "")}
+                            className="rounded bg-white/10 px-2 py-0.5 text-xs"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2 text-xs">{record.token_pending_id || "n/a"}</td>
+                      <td className="py-2">{record.token_issued_amount ?? 0}</td>
+                      <td className="py-2">{record.token_reason_code || "n/a"}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -47,6 +47,14 @@ def write_agent_decisions(
     return ok
 
 
+def _extract_output(decision_json: object) -> dict:
+    if isinstance(decision_json, dict):
+        if isinstance(decision_json.get("output"), dict):
+            return decision_json["output"]
+        return decision_json
+    return {}
+
+
 def _get_receipt_by_request_id(request_id: str) -> Optional[EnforcementReceipt]:
     # Option 1: derive enforcement receipts from QA records in audit_agent_decisions.
     if not request_id:
@@ -65,7 +73,8 @@ def _get_receipt_by_request_id(request_id: str) -> Optional[EnforcementReceipt]:
         if not row:
             return None
         decision_json = row[0] or {}
-        receipt_payload = decision_json.get("receipt") if isinstance(decision_json, dict) else None
+        output = _extract_output(decision_json)
+        receipt_payload = output.get("receipt") if isinstance(output, dict) else None
         if not receipt_payload:
             return None
         return EnforcementReceipt.model_validate(receipt_payload)
@@ -80,7 +89,10 @@ def _get_receipt_by_receipt_id(receipt_id: str) -> Optional[EnforcementReceipt]:
             SELECT decision_json
             FROM audit_agent_decisions
             WHERE agent_name = :agent_name
-              AND decision_json->'receipt'->>'receipt_id' = :receipt_id
+              AND (
+                decision_json->'receipt'->>'receipt_id' = :receipt_id
+                OR decision_json->'output'->'receipt'->>'receipt_id' = :receipt_id
+              )
             ORDER BY created_at DESC
             LIMIT 1
             """
@@ -92,10 +104,66 @@ def _get_receipt_by_receipt_id(receipt_id: str) -> Optional[EnforcementReceipt]:
         if not row:
             return None
         decision_json = row[0] or {}
-        receipt_payload = decision_json.get("receipt") if isinstance(decision_json, dict) else None
+        output = _extract_output(decision_json)
+        receipt_payload = output.get("receipt") if isinstance(output, dict) else None
         if not receipt_payload:
             return None
         return EnforcementReceipt.model_validate(receipt_payload)
+
+
+def resolve_qa_details(
+    *,
+    request_id: Optional[str],
+    receipt_id: Optional[str],
+) -> tuple[Optional[dict], Optional[str]]:
+    try:
+        if receipt_id:
+            receipt = _get_receipt_by_receipt_id(receipt_id)
+            if receipt:
+                with get_db_session() as session:
+                    stmt = text(
+                        """
+                        SELECT decision_json
+                        FROM audit_agent_decisions
+                        WHERE agent_name = :agent_name
+                          AND (
+                            decision_json->'receipt'->>'receipt_id' = :receipt_id
+                            OR decision_json->'output'->'receipt'->>'receipt_id' = :receipt_id
+                          )
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """
+                    )
+                    row = session.execute(
+                        stmt,
+                        {"agent_name": QA_AGENT_NAME, "receipt_id": receipt_id},
+                    ).fetchone()
+                    if row:
+                        output = _extract_output(row[0] or {})
+                        qa = output.get("qa") if isinstance(output, dict) else None
+                        if isinstance(qa, dict):
+                            return qa, None
+        if request_id:
+            with get_db_session() as session:
+                stmt = (
+                    select(audit_agent_decisions.c.decision_json)
+                    .where(
+                        audit_agent_decisions.c.request_id == request_id,
+                        audit_agent_decisions.c.agent_name == QA_AGENT_NAME,
+                    )
+                    .order_by(audit_agent_decisions.c.created_at.desc())
+                    .limit(1)
+                )
+                row = session.execute(stmt).fetchone()
+                if row:
+                    output = _extract_output(row[0] or {})
+                    qa = output.get("qa") if isinstance(output, dict) else None
+                    if isinstance(qa, dict):
+                        return qa, None
+        return None, "ENFORCEMENT_RECEIPT_INVALID"
+    except Exception as exc:
+        logger.warning("qa detail lookup failed: %s", exc)
+        return None, "AUDIT_WRITE_FAILED"
 
 
 def resolve_receipt(

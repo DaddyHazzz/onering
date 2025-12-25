@@ -410,6 +410,33 @@ audit_agent_decisions = Table(
     Index('idx_audit_agent_decisions_agent', 'agent_name', 'created_at'),
 )
 
+# Publish events (Phase 10.2 integration)
+publish_events = Table(
+    'publish_events',
+    metadata,
+    Column('id', String(100), primary_key=True),
+    Column('user_id', String(100), nullable=False, index=True),
+    Column('platform', String(50), nullable=False, index=True),
+    Column('content_hash', String(64), nullable=False, index=True),
+    Column('published_at', DateTime(timezone=True), nullable=False, index=True),
+    Column('platform_post_id', String(200), nullable=True, index=True),
+    Column('enforcement_request_id', String(100), nullable=True, index=True),
+    Column('enforcement_receipt_id', String(100), nullable=True, index=True),
+    Column('qa_status', String(20), nullable=True, index=True),
+    Column('violation_codes', JSON, nullable=True),
+    Column('audit_ok', Boolean, nullable=False, server_default='true'),
+    Column('metadata', JSON, nullable=True),
+    Column('token_mode', String(20), nullable=True),
+    Column('token_issued_amount', Integer, nullable=True),
+    Column('token_pending_amount', Integer, nullable=True),
+    Column('token_reason_code', String(100), nullable=True),
+    Column('token_ledger_id', String(100), nullable=True),
+    Column('token_pending_id', String(100), nullable=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Index('idx_publish_events_user_platform', 'user_id', 'platform'),
+    Index('idx_publish_events_enforcement', 'enforcement_request_id', 'enforcement_receipt_id'),
+)
+
 # Wait mode tables (Phase 8.4 - Waiting for the Ring)
 wait_notes = Table(
     'wait_notes',

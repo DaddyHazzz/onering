@@ -6,6 +6,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import ArchetypeCard from "@/components/ArchetypeCard";
 import EnforcementBadge from "@/components/EnforcementBadge";
 import EnforcementErrorCallout from "@/components/EnforcementErrorCallout";
+import TokenResultCallout from "@/components/TokenResultCallout";
 import {
   buildEnforcementRequestFields,
   EnforcementPayload,
@@ -27,6 +28,23 @@ interface FamilyMember {
   name: string;
   ringBalance: number;
   verified: boolean;
+}
+
+interface TokenResult {
+  mode: string;
+  issued_amount?: number;
+  pending_amount?: number;
+  reason_code?: string;
+  guardrails_applied?: string[];
+}
+
+interface LedgerEntry {
+  id: string;
+  eventType: string;
+  reasonCode: string;
+  amount: number;
+  balanceAfter: number;
+  createdAt?: string | null;
 }
 
 export default function Dashboard() {
@@ -54,6 +72,10 @@ export default function Dashboard() {
   const [loadingStreak, setLoadingStreak] = useState(false);
   const [challenge, setChallenge] = useState<{ challenge_id: string; date: string; type: string; prompt: string; status: string; next_action_hint: string } | null>(null);
   const [loadingChallenge, setLoadingChallenge] = useState(false);
+  const [tokenResult, setTokenResult] = useState<TokenResult | null>(null);
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [tokenPending, setTokenPending] = useState<number>(0);
+  const [tokenLedger, setTokenLedger] = useState<LedgerEntry[]>([]);
 
   const refreshStreak = async () => {
     if (!user?.id) return;
@@ -162,6 +184,26 @@ export default function Dashboard() {
     loadFamily();
   }, [user?.id]);
 
+  const refreshTokenLedger = async () => {
+    try {
+      const [balanceRes, ledgerRes] = await Promise.all([
+        fetch("/api/tokens/balance", { cache: "no-store" }),
+        fetch("/api/tokens/ledger?limit=20", { cache: "no-store" }),
+      ]);
+      const balanceData = await balanceRes.json();
+      const ledgerData = await ledgerRes.json();
+      if (balanceRes.ok) {
+        setTokenBalance(balanceData.balance ?? null);
+        setTokenPending(balanceData.pending?.totalPending ?? 0);
+      }
+      if (ledgerRes.ok) {
+        setTokenLedger(ledgerData.entries || []);
+      }
+    } catch (err) {
+      console.error("[dashboard] token ledger fetch failed", err);
+    }
+  };
+
   // Claim daily login bonus on component mount
   useEffect(() => {
     const claimDailyBonus = async () => {
@@ -190,6 +232,12 @@ export default function Dashboard() {
   useEffect(() => {
     if (user?.id) {
       refreshChallenge();
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      refreshTokenLedger();
     }
   }, [user?.id]);
 
@@ -377,6 +425,8 @@ export default function Dashboard() {
             </div>
           </div>
 
+        <TokenResultCallout tokenResult={tokenResult} />
+
         {/* ==== ARCHETYPE CARD ==== */}
         <div className="mb-8">
           <ArchetypeCard />
@@ -458,6 +508,7 @@ export default function Dashboard() {
                   onClick={async () => {
                     setLoading(true);
                     setPostError(null);
+                    setTokenResult(null);
                     const enforcementFields = buildEnforcementRequestFields(enforcementSimple);
                     const res = await fetch("/api/post-to-x", {
                       method: "POST",
@@ -467,7 +518,13 @@ export default function Dashboard() {
                     const data = await res.json();
                     setLoading(false);
                     if (data.success) {
-                      setRing((r) => r + 50);
+                      if (data.token_result) {
+                        setTokenResult(data.token_result);
+                        await refreshTokenLedger();
+                      }
+                      if (!data.token_result || data.token_result.mode === "off") {
+                        setRing((r) => r + 50);
+                      }
                       setHistory((h) => [{ platform: 'X', content: result, time: new Date().toISOString() }, ...h].slice(0,5));
                       await refreshStreak();
                       alert(`Posted! ${data.url}`);
@@ -589,6 +646,7 @@ export default function Dashboard() {
                     const threadContent = threadLines.join("\n");
                     setLoading(true);
                     setThreadPostError(null);
+                    setTokenResult(null);
                     const enforcementFields = buildEnforcementRequestFields(enforcementThread);
                     const res = await fetch("/api/post-to-x", {
                       method: "POST",
@@ -598,7 +656,13 @@ export default function Dashboard() {
                     const data = await res.json();
                     setLoading(false);
                     if (data.success) {
-                      setRing((r) => r + 50);
+                      if (data.token_result) {
+                        setTokenResult(data.token_result);
+                        await refreshTokenLedger();
+                      }
+                      if (!data.token_result || data.token_result.mode === "off") {
+                        setRing((r) => r + 50);
+                      }
                       setThreadLines([]);
                       setTopicForThread("");
                       await refreshStreak();
@@ -695,6 +759,56 @@ export default function Dashboard() {
             <p className="text-sm text-white/60 mt-4">{challenge.next_action_hint}</p>
           </div>
         )}
+
+        {/* RING Ledger */}
+        <div className="mt-8 bg-white/5 p-6 rounded-2xl border border-white/10">
+          <h3 className="text-2xl font-bold mb-4">RING Ledger</h3>
+          <div className="flex flex-wrap gap-6 mb-4 text-lg">
+            <div>
+              <strong>Balance:</strong>{" "}
+              <span className="text-yellow-300 font-bold">
+                {tokenBalance !== null ? tokenBalance : "n/a"}
+              </span>
+            </div>
+            <div>
+              <strong>Pending:</strong>{" "}
+              <span className="text-yellow-300 font-bold">{tokenPending}</span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-white/10">
+                <tr>
+                  <th className="py-2">Type</th>
+                  <th className="py-2">Reason</th>
+                  <th className="py-2">Amount</th>
+                  <th className="py-2">Balance After</th>
+                  <th className="py-2">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tokenLedger.map((entry) => (
+                  <tr key={entry.id} className="border-b border-white/5">
+                    <td className="py-2">{entry.eventType}</td>
+                    <td className="py-2">{entry.reasonCode}</td>
+                    <td className="py-2">{entry.amount}</td>
+                    <td className="py-2">{entry.balanceAfter}</td>
+                    <td className="py-2 text-xs text-gray-400">
+                      {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "n/a"}
+                    </td>
+                  </tr>
+                ))}
+                {tokenLedger.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-4 opacity-60">
+                      No ledger entries yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         {/* RING Spending Actions */}
         <div className="mt-8 bg-white/5 p-6 rounded-2xl border border-white/10">

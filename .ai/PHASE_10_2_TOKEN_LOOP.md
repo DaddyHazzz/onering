@@ -62,6 +62,30 @@ CREATE TABLE ring_guardrails_state (
     last_earn_at TIMESTAMPTZ,
     reset_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+-- Publish events (post -> ledger traceability)
+CREATE TABLE publish_events (
+    id UUID PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    published_at TIMESTAMPTZ NOT NULL,
+    platform_post_id TEXT,
+    enforcement_request_id TEXT,
+    enforcement_receipt_id TEXT,
+    qa_status TEXT,
+    violation_codes JSONB,
+    audit_ok BOOLEAN NOT NULL DEFAULT true,
+    metadata JSONB,
+    token_mode TEXT,
+    token_issued_amount INTEGER,
+    token_pending_amount INTEGER,
+    token_reason_code TEXT,
+    token_ledger_id TEXT,
+    token_pending_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ### Mode Switching
@@ -99,7 +123,8 @@ RING_EARNED = BASE_AMOUNT * (1 - GUARDRAIL_REDUCTION_PCT)
 
 1. **QA Status = PASS:** Draft must pass quality assurance
 2. **audit_ok = true:** Enforcement pipeline must approve
-3. **Guardrails Check:** No blocking violations (see below)
+3. **Platform Confirmation:** platform_post_id must be present
+4. **Guardrails Check:** No blocking violations (see below)
 
 **If ANY requirement fails:** Issuance denied, violations logged.
 
@@ -214,6 +239,43 @@ Returns user's token balance and pending rewards.
 
 Returns recent ledger entries (last 20 by default).
 
+### POST `/v1/tokens/publish`
+
+Persist publish event and issue tokens if eligible.
+
+**Body:**
+
+```json
+{
+  "event_id": "uuid",
+  "user_id": "user_123",
+  "platform": "x",
+  "content_hash": "sha256",
+  "published_at": "ISO8601",
+  "platform_post_id": "tweet_id",
+  "enforcement_request_id": "req_123",
+  "enforcement_receipt_id": "rec_123",
+  "metadata": {"rate_limit_remaining": 4}
+}
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "event_id": "uuid",
+  "token_result": {
+    "mode": "shadow",
+    "issued_amount": 0,
+    "pending_amount": 10,
+    "reason_code": "PENDING",
+    "guardrails_applied": []
+  }
+}
+```
+
+
 **Query Params:**
 
 - `limit` (default: 20, max: 100)
@@ -293,48 +355,36 @@ python -m pytest backend/tests/test_token_ledger.py -v
 
 ---
 
-## 🚀 Integration with Posting Flow
+## Integration with Posting Flow
 
 ### Current Status
 
-**Token Router Registered:** ✅ Added to `backend/main.py` line 129
+**Token Router Registered:** Go. Added to `backend/main.py`
 
-**Posting Integration:** ⏳ Requires wiring into post success handler
+**Posting Integration:** Go. Wired to publish success with enforcement receipt gating.
 
-### Next Steps (Phase 10.3)
+### Publish Events (Canonical)
 
-Wire `issue_ring_for_publish()` into:
+Publish success emits a canonical event stored in `publish_events` (append-only):
 
-1. **Backend Posting Agent** (`backend/agents/posting_agent.py`)
-2. **Post Success Callback** (after external API confirms post)
-3. **Pass QA Status** from draft enforcement results
-4. **Pass Platform** for future multiplier logic
+- event_id (uuid), user_id, platform, content_hash, published_at, platform_post_id
+- enforcement_request_id, enforcement_receipt_id, qa_status, violation_codes, audit_ok
+- token_mode, token_issued_amount, token_pending_amount, token_reason_code
+- token_ledger_id, token_pending_id, metadata (rate-limit snapshot, latency)
 
-**Example Integration Point:**
+### Issuance Gating (Must All Pass)
 
-```python
-# backend/agents/posting_agent.py (hypothetical)
-async def handle_post_success(user_id, draft_id, platform, qa_status, audit_ok):
-    # Post succeeded on platform
-    post_id = await post_to_platform(...)
-    
-    # Issue RING tokens
-    from backend.features.tokens.ledger import issue_ring_for_publish
-    from backend.core.database import get_db
-    
-    db = next(get_db())
-    result = issue_ring_for_publish(
-        db, user_id, draft_id, request_id, receipt_id,
-        qa_status=qa_status, audit_ok=audit_ok, platform=platform
-    )
-    
-    if result["issued"]:
-        logger.info(f"Issued {result['amount']} RING to {user_id}")
-    else:
-        logger.warning(f"RING issuance blocked: {result['violations']}")
-```
+1. Receipt validation PASS (server-side)
+2. QA status PASS
+3. audit_ok true
+4. Platform confirmation present (platform_post_id)
 
----
+If any gate fails: publish event is persisted with reason_code, issuance skipped.
+
+### Idempotency
+
+- Issuance key: `publish_event_id`
+- Duplicate publish calls return stored token_result (no double issuance)
 
 ## 📊 Monitoring & Observability
 
@@ -369,7 +419,7 @@ All token operations log with structured context:
 1. **No Double-Spend:** Each earn linked to unique `(request_id, receipt_id)` pair
 2. **Append-Only Audit Trail:** `ring_ledger` has no UPDATE/DELETE operations exposed
 3. **Atomic Commits:** Balance update + ledger append in single transaction
-4. **Idempotency:** Duplicate issuance calls with same IDs rejected (future)
+4. **Idempotency:** Duplicate issuance calls with same publish_event_id rejected
 
 ### Data Retention
 
@@ -400,7 +450,7 @@ All token operations log with structured context:
 
 ### Phase 3: Production Hardening
 
-- [ ] Add idempotency keys to prevent duplicate issuance
+- [x] Add idempotency keys to prevent duplicate issuance
 - [ ] Implement platform multipliers (X: 1.2x, IG: 0.8x, etc.)
 - [ ] Add user-facing ledger UI (transaction history)
 - [ ] Set up alerting for anomaly detection triggers
