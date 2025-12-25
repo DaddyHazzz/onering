@@ -268,3 +268,75 @@ export interface APIError {
   message: string;
   status: number;
 }
+
+// ===== Phase 8.6: Analytics Types =====
+
+export type InactivityRisk = "low" | "medium" | "high";
+
+export interface DraftAnalyticsSummary {
+  draft_id: string;
+  total_segments: number;
+  total_words: number;
+  unique_contributors: number;
+  last_activity_ts: string | null;
+  ring_pass_count: number;
+  avg_time_holding_ring_seconds: number | null;
+  inactivity_risk: InactivityRisk;
+}
+
+export interface ContributorMetrics {
+  user_id: string;
+  segments_added_count: number;
+  words_added: number;
+  first_contribution_ts: string | null;
+  last_contribution_ts: string | null;
+  ring_holds_count: number;
+  total_hold_seconds: number;
+  suggestions_queued_count: number;
+  votes_cast_count: number;
+}
+
+export interface DraftAnalyticsContributors {
+  draft_id: string;
+  contributors: ContributorMetrics[];
+  total_contributors: number;
+}
+
+export interface RingHold {
+  user_id: string;
+  start_ts: string;
+  end_ts: string | null;
+  seconds: number;
+}
+
+export interface RingPass {
+  from_user_id: string;
+  to_user_id: string;
+  ts: string;
+  strategy: string | null;
+}
+
+export interface RingRecommendation {
+  recommended_to_user_id: string;
+  reason: string;
+}
+
+export interface DraftAnalyticsRing {
+  draft_id: string;
+  current_holder_id: string;
+  holds: RingHold[];
+  passes: RingPass[];
+  recommendation: RingRecommendation | null;
+}
+
+export interface DailyActivityMetrics {
+  date: string;
+  segments_added: number;
+  ring_passes: number;
+}
+
+export interface DraftAnalyticsDaily {
+  draft_id: string;
+  days: DailyActivityMetrics[];
+  window_days: number;
+}

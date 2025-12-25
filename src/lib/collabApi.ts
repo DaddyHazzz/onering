@@ -434,4 +434,47 @@ export async function listVotes(draftId: string): Promise<DraftVotesResponse> {
   });
   return response.data;
 }
+
+/**
+ * Get analytics summary for a draft (segment count, word count, contributors, inactivity risk, etc.)
+ */
+export async function getDraftAnalyticsSummary(draftId: string): Promise<DraftAnalyticsSummary> {
+  const response = await apiFetch<DraftAnalyticsSummary>(`/v1/analytics/drafts/${draftId}/summary`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+/**
+ * Get per-contributor metrics (segments, words, holds, suggestions, votes)
+ */
+export async function getDraftAnalyticsContributors(draftId: string): Promise<DraftAnalyticsContributors> {
+  const response = await apiFetch<DraftAnalyticsContributors>(`/v1/analytics/drafts/${draftId}/contributors`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+/**
+ * Get ring dynamics (current holder, holds history, passes, next recommended holder)
+ */
+export async function getDraftAnalyticsRing(draftId: string): Promise<DraftAnalyticsRing> {
+  const response = await apiFetch<DraftAnalyticsRing>(`/v1/analytics/drafts/${draftId}/ring`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+/**
+ * Get daily activity metrics over past N days (default 14)
+ */
+export async function getDraftAnalyticsDaily(draftId: string, days?: number): Promise<DraftAnalyticsDaily> {
+  const params = new URLSearchParams();
+  if (days !== undefined) params.append("days", String(days));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const response = await apiFetch<DraftAnalyticsDaily>(`/v1/analytics/drafts/${draftId}/daily${qs}`, {
+    method: "GET",
+  });
+  return response.data;
+}
  

@@ -139,3 +139,95 @@ def get_analytics_leaderboard(
         raise
     except Exception as e:
         raise AppError("Internal error while computing leaderboard")
+
+
+# ===== Phase 8.6: Draft Analytics (summary, contributors, ring dynamics, daily) =====
+
+from fastapi import Depends, Query
+from backend.core.auth import get_current_user_id
+from backend.features.analytics.service import AnalyticsService
+from backend.features.collaboration.service import get_draft
+from backend.features.analytics.models import (
+    DraftAnalyticsSummary, DraftAnalyticsContributors, DraftAnalyticsRing, DraftAnalyticsDaily
+)
+from backend.core.tracing import start_span
+from backend.core.errors import NotFoundError, PermissionError
+
+
+def _is_collaborator(draft, user_id: str) -> bool:
+    """Check if user is collaborator (creator or in collaborators list)"""
+    return user_id == draft.creator_id or user_id in draft.collaborators
+
+
+@router.get("/drafts/{draft_id}/summary", response_model=DraftAnalyticsSummary)
+async def get_draft_summary(
+    draft_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get draft summary analytics (segments, words, contributors, inactivity risk)"""
+    
+    with start_span("analytics.summary", {"draft_id": draft_id, "user_id": user_id}):
+        draft = get_draft(draft_id)
+        if not draft:
+            raise NotFoundError(f"Draft {draft_id} not found")
+        
+        # Check collaborator access
+        if not _is_collaborator(draft, user_id):
+            raise PermissionError(f"User {user_id} is not a collaborator on draft {draft_id}")
+        
+        return AnalyticsService.compute_draft_summary(draft)
+
+
+@router.get("/drafts/{draft_id}/contributors", response_model=DraftAnalyticsContributors)
+async def get_draft_contributors(
+    draft_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get contributor breakdown (segments, words, ring holds, wait mode votes/suggestions)"""
+    
+    with start_span("analytics.contributors", {"draft_id": draft_id, "user_id": user_id}):
+        draft = get_draft(draft_id)
+        if not draft:
+            raise NotFoundError(f"Draft {draft_id} not found")
+        
+        if not _is_collaborator(draft, user_id):
+            raise PermissionError(f"User {user_id} is not a collaborator on draft {draft_id}")
+        
+        return AnalyticsService.compute_contributors(draft)
+
+
+@router.get("/drafts/{draft_id}/ring", response_model=DraftAnalyticsRing)
+async def get_draft_ring_dynamics(
+    draft_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get ring dynamics (current holder, hold history, passes, next holder recommendation)"""
+    
+    with start_span("analytics.ring", {"draft_id": draft_id, "user_id": user_id}):
+        draft = get_draft(draft_id)
+        if not draft:
+            raise NotFoundError(f"Draft {draft_id} not found")
+        
+        if not _is_collaborator(draft, user_id):
+            raise PermissionError(f"User {user_id} is not a collaborator on draft {draft_id}")
+        
+        return AnalyticsService.compute_ring_dynamics(draft)
+
+
+@router.get("/drafts/{draft_id}/daily", response_model=DraftAnalyticsDaily)
+async def get_draft_daily_activity(
+    draft_id: str,
+    days: int = Query(14, ge=1, le=90, description="Number of days to include (1-90)"),
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get daily activity sparkline (last N days of segments added and ring passes)"""
+    
+    with start_span("analytics.daily", {"draft_id": draft_id, "user_id": user_id, "days": days}):
+        draft = get_draft(draft_id)
+        if not draft:
+            raise NotFoundError(f"Draft {draft_id} not found")
+        
+        if not _is_collaborator(draft, user_id):
+            raise PermissionError(f"User {user_id} is not a collaborator on draft {draft_id}")
+        
+        return AnalyticsService.compute_daily_activity(draft, days=days)
