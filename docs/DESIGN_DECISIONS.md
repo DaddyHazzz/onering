@@ -1,5 +1,8 @@
+---
 # Moved
 
-This document is no longer maintained.
+This document is maintained in `.ai/DECISIONS.md`.
 
-Canonical documentation lives in **.ai/** → see **[.ai/README.md](../.ai/README.md)**.
+See the canonical version here:
+→ `../.ai/DECISIONS.md`
+---
