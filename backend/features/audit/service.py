@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import insert
 
 from backend.core.config import settings
-from backend.core.database import audit_events, get_db_session, create_all_tables, get_database_url
+from backend.core.database import audit_events, get_db_session, get_database_url
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,6 @@ def record_audit_event(
         return
 
     try:
-        create_all_tables()
         with get_db_session() as session:
             session.execute(insert(audit_events).values(**record))
     except Exception as exc:

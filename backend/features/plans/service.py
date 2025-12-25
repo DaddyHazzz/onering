@@ -20,8 +20,6 @@ from backend.core.database import (
     plan_entitlements,
     user_plans,
     entitlement_grace_usage,
-    create_all_tables,
-    apply_schema_upgrades,
 )
 from backend.models.plan import Plan
 from backend.models.entitlement import Entitlement
@@ -78,17 +76,7 @@ def _ensure_plan_schema() -> None:
     global _plan_schema_ready
     if _plan_schema_ready:
         return
-    try:
-        create_all_tables()
-    except Exception:
-        # Swallow to preserve backward compatibility in test setups
-        pass
-    try:
-        apply_schema_upgrades()
-        _plan_schema_ready = True
-    except Exception:
-        # If migration fails, we still attempt queries to surface errors
-        pass
+    _plan_schema_ready = True
 
 
 def seed_plans() -> None:

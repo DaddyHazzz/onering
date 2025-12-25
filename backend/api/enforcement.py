@@ -1,13 +1,11 @@
 """Enforcement receipt validation endpoints (Phase 10.1)."""
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
-from backend.features.enforcement.audit import (
-    get_receipt_by_receipt_id,
-    get_receipt_by_request_id,
-)
+from backend.features.enforcement.audit import resolve_receipt
 
 router = APIRouter(prefix="/v1/enforcement", tags=["enforcement"])
 
@@ -27,19 +25,37 @@ class ReceiptValidateRequest(BaseModel):
 @router.post("/receipts/validate")
 async def validate_receipt(body: ReceiptValidateRequest):
     if not body.request_id and not body.receipt_id:
-        raise HTTPException(status_code=422, detail="request_id or receipt_id is required")
-
-    receipt = None
-    if body.receipt_id:
-        receipt = get_receipt_by_receipt_id(body.receipt_id)
-    if receipt is None and body.request_id:
-        receipt = get_receipt_by_request_id(body.request_id)
-
-    if receipt is None:
         return {
             "ok": False,
-            "code": "RECEIPT_NOT_FOUND",
-            "message": "No enforcement receipt found for the provided identifier.",
+            "code": "ENFORCEMENT_RECEIPT_REQUIRED",
+            "message": "request_id or receipt_id is required",
+        }
+
+    receipt, error_code = resolve_receipt(request_id=body.request_id, receipt_id=body.receipt_id)
+    if error_code:
+        payload = {
+            "ok": False,
+            "code": error_code,
+            "message": "Enforcement receipt lookup failed",
+        }
+        if error_code == "AUDIT_WRITE_FAILED":
+            payload["suggestedFix"] = "Ensure audit tables are created before enabling enforced mode."
+        return payload
+
+    now = datetime.now(timezone.utc)
+    if receipt.expires_at and receipt.expires_at < now:
+        return {
+            "ok": False,
+            "code": "ENFORCEMENT_RECEIPT_EXPIRED",
+            "message": "Enforcement receipt has expired",
+            "suggestedFix": "Regenerate content with enforcement enabled to obtain a fresh receipt.",
+        }
+
+    if receipt.qa_status != "PASS":
+        return {
+            "ok": False,
+            "code": "ENFORCEMENT_RECEIPT_INVALID",
+            "message": "Enforcement receipt does not permit publishing",
         }
 
     return {"ok": True, "receipt": receipt.model_dump(mode="json")}

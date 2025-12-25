@@ -11,6 +11,12 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
 const enforcementSchema = z
   .object({
+    request_id: z.string().min(1).optional(),
+    receipt: z
+      .object({
+        receipt_id: z.string().min(1),
+      })
+      .optional(),
     qa_summary: z
       .object({
         status: z.enum(["PASS", "FAIL"]),
@@ -142,8 +148,8 @@ export async function POST(req: NextRequest) {
     const enforcementWarnings: string[] = [];
 
     if (ENFORCEMENT_MODE !== "off") {
-      const receiptId = enforcement_receipt_id;
-      const requestId = enforcement_request_id;
+      const receiptId = enforcement_receipt_id || enforcement?.receipt?.receipt_id;
+      const requestId = enforcement_request_id || enforcement?.request_id;
 
       if (!receiptId && !requestId) {
         if (ENFORCEMENT_MODE === "enforced") {
@@ -158,9 +164,13 @@ export async function POST(req: NextRequest) {
         const receiptCheck = await validateEnforcementReceipt(requestId, receiptId);
         if (!receiptCheck.ok) {
           if (ENFORCEMENT_MODE === "enforced") {
+            const suggestedFix =
+              receiptCheck.code === "AUDIT_WRITE_FAILED"
+                ? "Ensure audit tables are created before enabling enforced mode."
+                : "Regenerate content with enforcement enabled and pass a valid enforcement_request_id.";
             return failure("Enforcement receipt invalid", 403, {
-              code: "ENFORCEMENT_RECEIPT_INVALID",
-              suggestedFix: "Regenerate content with enforcement enabled and pass a valid enforcement_request_id.",
+              code: receiptCheck.code,
+              suggestedFix,
               details: { reason: receiptCheck.code, message: receiptCheck.message },
             });
           }

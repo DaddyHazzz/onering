@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, Any, List
 from sqlalchemy import select, insert, func
 
-from backend.core.database import get_db_session, usage_events, create_all_tables
+from backend.core.database import get_db_session, usage_events
 from backend.models.usage_event import UsageEvent
 
 
@@ -39,12 +39,6 @@ def emit_usage_event(
         occurred_at = datetime.now(timezone.utc)
     elif occurred_at.tzinfo is None:
         occurred_at = occurred_at.replace(tzinfo=timezone.utc)
-    
-    # Ensure tables exist
-    try:
-        create_all_tables()
-    except Exception:
-        pass
     
     # Insert usage event (allow duplicates for now; Phase 4.2+ can add idempotency)
     with get_db_session() as session:

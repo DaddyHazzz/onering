@@ -72,7 +72,7 @@ describe("POST /api/post-to-x", () => {
     currentUserMock.mockResolvedValue({ id: "user-1" });
     global.fetch = vi.fn(async () =>
       new Response(
-        JSON.stringify({ ok: true, receipt: { qa_status: "FAIL" } }),
+        JSON.stringify({ ok: false, code: "ENFORCEMENT_RECEIPT_INVALID", message: "invalid" }),
         { status: 200 }
       )
     ) as any;
@@ -86,7 +86,7 @@ describe("POST /api/post-to-x", () => {
     const body = await res.json();
 
     expect(res.status).toBe(403);
-    expect(body.code).toBe("QA_BLOCKED");
+    expect(body.code).toBe("ENFORCEMENT_RECEIPT_INVALID");
   });
 
   it("enforced mode allows when receipt PASS", async () => {

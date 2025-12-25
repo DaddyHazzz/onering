@@ -198,7 +198,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
     try:
         strategy = _strategy_agent(request)
         strategy = StrategyPlan.model_validate(strategy)
-        status = "pass"
+        status = "PASS"
     except ValidationError as exc:
         strategy = StrategyPlan(
             angle="invalid",
@@ -208,7 +208,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         )
         warnings.append(f"strategy_contract_invalid:{exc}")
         contract_failures.append("STRATEGY_CONTRACT_INVALID")
-        status = "fail"
+        status = "FAIL"
     finished = _now()
     strategy_meta = _agent_meta(
         agent_name="Strategy",
@@ -240,12 +240,12 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         try:
             evidence = _research_agent(request)
             evidence = EvidenceBundle.model_validate(evidence)
-            status = "pass"
+            status = "PASS"
         except ValidationError as exc:
             evidence = EvidenceBundle(sources=[], summary="", quality_score=0.0)
             warnings.append(f"research_contract_invalid:{exc}")
             contract_failures.append("RESEARCH_CONTRACT_INVALID")
-            status = "fail"
+            status = "FAIL"
         finished = _now()
         research_meta = _agent_meta(
             agent_name="Research",
@@ -275,7 +275,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
     try:
         draft = _writer_agent(request, strategy, evidence)
         draft = DraftContent.model_validate(draft)
-        status = "pass"
+        status = "PASS"
     except ValidationError as exc:
         draft = DraftContent(
             content=request.content or "",
@@ -284,7 +284,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         )
         warnings.append(f"writer_contract_invalid:{exc}")
         contract_failures.append("WRITER_CONTRACT_INVALID")
-        status = "fail"
+        status = "FAIL"
     finished = _now()
     writer_meta = _agent_meta(
         agent_name="Writer",
@@ -326,6 +326,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         )
     finished = _now()
     qa_decision_hash = stable_hash(qa.model_dump(mode="json"))
+    ttl_seconds = int(getattr(settings, "ONERING_ENFORCEMENT_RECEIPT_TTL_SECONDS", 3600) or 3600)
     receipt = EnforcementReceipt(
         receipt_id=str(uuid4()),
         request_id=request.request_id,
@@ -336,7 +337,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         qa_decision_hash=qa_decision_hash,
         policy_version=policy.POLICY_VERSION,
         created_at=finished,
-        expires_at=finished + timedelta(hours=24),
+        expires_at=finished + timedelta(seconds=ttl_seconds),
     )
 
     qa_meta = _agent_meta(
@@ -355,13 +356,13 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         _decision_record(
             qa_meta,
             {"qa": qa.model_dump(mode="json"), "receipt": receipt.model_dump(mode="json")},
-            "pass" if qa.status == "PASS" else "fail",
+            "PASS" if qa.status == "PASS" else "FAIL",
         )
     )
     decisions.append(
         EnforcementDecisionSummary(
             agent_name=QA_AGENT_NAME,
-            status=qa.status.lower(),
+            status=qa.status,
             violation_codes=qa.violation_codes,
             required_edits=qa.required_edits,
             decision_id=qa_meta.output_hash,
@@ -385,11 +386,11 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
             started_at=started,
             finished_at=finished,
         )
-        audit_records.append(_decision_record(posting_meta, posting.model_dump(mode="json"), "pass"))
+        audit_records.append(_decision_record(posting_meta, posting.model_dump(mode="json"), "PASS"))
         decisions.append(
             EnforcementDecisionSummary(
                 agent_name="Posting",
-                status="pass",
+                status="PASS",
                 violation_codes=posting.platform_checks,
                 required_edits=[],
                 decision_id=posting_meta.output_hash,
@@ -412,7 +413,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         started_at=started,
         finished_at=finished,
     )
-    audit_records.append(_decision_record(analytics_meta, {"token_mode": token_mode}, "pass"))
+    audit_records.append(_decision_record(analytics_meta, {"token_mode": token_mode}, "PASS"))
     decisions.append(
         EnforcementDecisionSummary(
             agent_name="Analytics",
@@ -433,6 +434,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
     qa_summary = {
         "status": qa.status,
         "violation_codes": qa.violation_codes,
+        "required_edits": qa.required_edits,
         "risk_score": qa.risk_score,
     }
 

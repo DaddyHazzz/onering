@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     ONERING_ENFORCEMENT_MODE: str = "off"  # off | advisory | enforced
     ONERING_AUDIT_LOG: str = "1"  # "0" | "1"
     ONERING_TOKEN_ISSUANCE: str = "off"  # off | shadow | live
+    ONERING_ENFORCEMENT_RECEIPT_TTL_SECONDS: int = 3600
 
     # Admin access (Phase 4.6: hybrid auth)
     ADMIN_KEY: Optional[str] = None  # Legacy key (backward compatible)

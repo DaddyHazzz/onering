@@ -22,3 +22,8 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 - Always deploy app code that tolerates old and new schemas during rollout.
 - Keep destructive operations (drops/renames) for scheduled maintenance with explicit backups and restore plan.
 - Capture migration run logs and tie to `request_id`/deployment identifier.
+
+## Phase 10.1 Enforcement Readiness
+- Ensure `audit_agent_decisions` exists before enabling `ONERING_ENFORCEMENT_MODE=advisory|enforced`.
+- Recommended preflight:
+  - `python -c "from backend.core.database import create_all_tables; create_all_tables()"` on deployment host.

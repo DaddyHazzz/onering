@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import select, insert
 
-from backend.core.database import get_db_session, users as app_users, create_all_tables
+from backend.core.database import get_db_session, users as app_users
 from backend.models.user import User
 
 
@@ -32,12 +32,6 @@ def get_user(user_id: str) -> Optional[User]:
 
 
 def get_or_create_user(user_id: str) -> User:
-    # Ensure tables exist (idempotent in tests/dev)
-    try:
-        create_all_tables()
-    except Exception:
-        pass
-
     existing = get_user(user_id)
     if existing:
         return existing

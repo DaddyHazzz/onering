@@ -101,6 +101,7 @@ Invariants:
   - Returns: SSE stream of tokens
   - Optional (Phase 10.1): when enforcement enabled, a final SSE event `event: enforcement`
     includes `{ request_id, mode, receipt, decisions, qa_summary, would_block, required_edits, audit_ok }`.
+  - `qa_summary.status` is canonicalized as `PASS` or `FAIL`.
   - Non-streaming responses include optional `enforcement` field with the same shape.
 
 ### Enforcement Metadata (Phase 10.1)
@@ -222,12 +223,18 @@ Notes:
   - Enforced mode requires one of:
     - `enforcement_request_id` (request_id returned in enforcement metadata)
     - `enforcement_receipt_id` (receipt.receipt_id returned in enforcement metadata)
+  - Receipt expiry: receipts expire after `ONERING_ENFORCEMENT_RECEIPT_TTL_SECONDS` (default 3600s)
 
 ## Enforcement (internal)
 
 - POST /v1/enforcement/receipts/validate
   - Body: { request_id?: string, receipt_id?: string }
   - Returns: { ok: true, receipt } or { ok: false, code, message }
+  - Error codes:
+    - `ENFORCEMENT_RECEIPT_REQUIRED`
+    - `ENFORCEMENT_RECEIPT_INVALID`
+    - `ENFORCEMENT_RECEIPT_EXPIRED`
+    - `AUDIT_WRITE_FAILED`
 
 Notes:
 - All time-based endpoints accept optional `now` for deterministic tests.
