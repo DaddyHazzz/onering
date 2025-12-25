@@ -1,5 +1,7 @@
-# Moved
+# Stub: See Canonical Version
 
-This document is no longer maintained.
+This file is a stub. All agent documentation lives in:
 
-Canonical documentation lives in **.ai/** → see **[.ai/README.md](../.ai/README.md)**.
+**[../.ai/AGENTS_OVERVIEW.md](../.ai/AGENTS_OVERVIEW.md)**
+
+Please refer to the canonical source in the `.ai/` directory for the authoritative agent system overview.
