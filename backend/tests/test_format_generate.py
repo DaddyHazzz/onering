@@ -16,46 +16,43 @@ client = TestClient(app)
 @pytest.fixture
 def sample_draft():
     """Create a sample draft for testing."""
+    from backend.models.collab import DraftSegment
+    from datetime import datetime
+    
     return CollabDraft(
-        id="draft-123",
-        owner_id="user-1",
+        draft_id="draft-123",
+        creator_id="user-1",
         title="Test Draft",
         platform="x",
         status="active",
         segments=[
-            {
-                "segment_id": "seg-1",
-                "draft_id": "draft-123",
-                "user_id": "user-1",
-                "content_type": "text",
-                "text": "This is the opening segment. Great content starts here!",
-                "metadata": {
-                    "hashtags": ["growth", "startup"],
-                    "cta": "Join my community"
-                },
-                "created_at": "2025-01-01T00:00:00Z",
-            },
-            {
-                "segment_id": "seg-2",
-                "draft_id": "draft-123",
-                "user_id": "user-2",
-                "content_type": "text",
-                "text": "This is the second part of the story. Building momentum now.",
-                "metadata": {},
-                "created_at": "2025-01-01T00:05:00Z",
-            },
+            DraftSegment(
+                segment_id="seg-1",
+                draft_id="draft-123",
+                user_id="user-1",
+                content="This is the opening segment. Great content starts here! #growth #startup Join my community",
+                segment_order=1,
+                created_at=datetime.fromisoformat("2025-01-01T00:00:00"),
+            ),
+            DraftSegment(
+                segment_id="seg-2",
+                draft_id="draft-123",
+                user_id="user-2",
+                content="This is the second part of the story. Building momentum now.",
+                segment_order=2,
+                created_at=datetime.fromisoformat("2025-01-01T00:05:00"),
+            ),
         ],
         ring_state=RingState(
             draft_id="draft-123",
             current_holder_id="user-1",
             holders_history=["user-1"],
-            passed_at="2025-01-01T00:00:00Z",
+            passed_at=datetime.fromisoformat("2025-01-01T00:00:00"),
         ),
         collaborators=["user-2"],
         pending_invites=[],
-        created_at="2025-01-01T00:00:00Z",
-        updated_at="2025-01-01T00:05:00Z",
-        metadata={},
+        created_at=datetime.fromisoformat("2025-01-01T00:00:00"),
+        updated_at=datetime.fromisoformat("2025-01-01T00:05:00"),
     )
 
 

@@ -67,13 +67,16 @@ async def format_generate(
     
     try:
         # Rate limit check
-        allowed, remaining = rate_limiter.allow_request(user_id)
+        allowed = rate_limiter.allow(
+            f"format:{user_id}",
+            per_minute=20,
+            burst=10,
+        )
         if not allowed:
             logger.warning(f"[format/generate] rate_limit_exceeded, user_id={user_id}")
             raise HTTPException(
                 status_code=429,
                 detail=f"Rate limit exceeded. Retry after 1 minute.",
-                headers={"X-RateLimit-Remaining": str(remaining)}
             )
         
         with start_span("format_generate", {"draft_id": request.draft_id, "user_id": user_id}):

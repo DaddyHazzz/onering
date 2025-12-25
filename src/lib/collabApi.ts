@@ -23,6 +23,17 @@ import {
   ExportResponse,
   APIError 
 } from "@/types/collab";
+import {
+  ScratchNote,
+  QueuedSuggestion,
+  SegmentVote,
+  CreateNoteRequest,
+  UpdateNoteRequest,
+  CreateSuggestionRequest,
+  VoteRequest,
+  DraftVotesResponse,
+  SuggestionStatus
+} from "@/types/collab";
 
 const BASE_URL = "/v1/collab";
 
@@ -261,4 +272,134 @@ export function isRingRequiredError(error: unknown): error is APIError {
     "code" in error &&
     (error as any).code === "ring_required"
   );
+}
+
+/**
+ * =====================================================
+ * WAIT MODE API METHODS - Phase 8.4
+ * =====================================================
+ */
+
+/**
+ * Create a scratch note (private to author).
+ */
+export async function createNote(
+  draftId: string,
+  req: CreateNoteRequest
+): Promise<ScratchNote> {
+  const response = await apiFetch<ScratchNote>(`/v1/wait/drafts/${draftId}/notes`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  return response.data;
+}
+
+/**
+ * List user's notes for a draft (private).
+ */
+export async function listNotes(draftId: string): Promise<ScratchNote[]> {
+  const response = await apiFetch<ScratchNote[]>(`/v1/wait/drafts/${draftId}/notes`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+/**
+ * Update a note's content.
+ */
+export async function updateNote(
+  noteId: string,
+  req: UpdateNoteRequest
+): Promise<ScratchNote> {
+  const response = await apiFetch<ScratchNote>(`/v1/wait/notes/${noteId}`, {
+    method: "PATCH",
+    body: JSON.stringify(req),
+  });
+  return response.data;
+}
+
+/**
+ * Delete a note.
+ */
+export async function deleteNote(noteId: string): Promise<void> {
+  await apiFetch<void>(`/v1/wait/notes/${noteId}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * Create a queued suggestion.
+ */
+export async function createSuggestion(
+  draftId: string,
+  req: CreateSuggestionRequest
+): Promise<QueuedSuggestion> {
+  const response = await apiFetch<QueuedSuggestion>(`/v1/wait/drafts/${draftId}/suggestions`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  return response.data;
+}
+
+/**
+ * List user's suggestions for a draft (filtered by status).
+ */
+export async function listSuggestions(
+  draftId: string,
+  status?: SuggestionStatus
+): Promise<QueuedSuggestion[]> {
+  const query = status ? `?status=${status}` : "";
+  const response = await apiFetch<QueuedSuggestion[]>(`/v1/wait/drafts/${draftId}/suggestions${query}`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+/**
+ * Dismiss a suggestion (mark as dismissed).
+ */
+export async function dismissSuggestion(suggestionId: string): Promise<QueuedSuggestion> {
+  const response = await apiFetch<QueuedSuggestion>(`/v1/wait/suggestions/${suggestionId}/dismiss`, {
+    method: "POST",
+  });
+  return response.data;
+}
+
+/**
+ * Consume a suggestion (ring holder only).
+ */
+export async function consumeSuggestion(
+  suggestionId: string,
+  segmentId: string
+): Promise<QueuedSuggestion> {
+  const response = await apiFetch<QueuedSuggestion>(`/v1/wait/suggestions/${suggestionId}/consume?segment_id=${segmentId}`, {
+    method: "POST",
+  });
+  return response.data;
+}
+
+/**
+ * Vote on a segment (upvote/downvote, upserts).
+ */
+export async function voteSegment(
+  draftId: string,
+  segmentId: string,
+  req: VoteRequest
+): Promise<SegmentVote> {
+  const response = await apiFetch<SegmentVote>(`/v1/wait/drafts/${draftId}/segments/${segmentId}/vote`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  return response.data;
+}
+
+/**
+ * List votes for all segments in a draft (with aggregates + user's votes).
+ */
+export async function listVotes(draftId: string): Promise<DraftVotesResponse> {
+  const response = await apiFetch<DraftVotesResponse>(`/v1/wait/drafts/${draftId}/votes`, {
+    method: "GET",
+  });
+  return response.data;
+}
 }

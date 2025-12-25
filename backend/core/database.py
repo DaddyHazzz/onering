@@ -387,6 +387,48 @@ audit_events = Table(
     Column('user_agent', Text, nullable=True),
 )
 
+# Wait mode tables (Phase 8.4 - Waiting for the Ring)
+wait_notes = Table(
+    'wait_notes',
+    metadata,
+    Column('note_id', String(100), primary_key=True),
+    Column('draft_id', String(100), nullable=False, index=True),
+    Column('author_user_id', String(100), nullable=False, index=True),
+    Column('content', Text, nullable=False),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    Index('idx_wait_notes_draft_author', 'draft_id', 'author_user_id'),
+)
+
+wait_suggestions = Table(
+    'wait_suggestions',
+    metadata,
+    Column('suggestion_id', String(100), primary_key=True),
+    Column('draft_id', String(100), nullable=False, index=True),
+    Column('author_user_id', String(100), nullable=False, index=True),
+    Column('kind', String(50), nullable=False),
+    Column('content', Text, nullable=False),
+    Column('status', String(50), nullable=False, server_default='queued', index=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('consumed_at', DateTime(timezone=True), nullable=True),
+    Column('consumed_by_user_id', String(100), nullable=True),
+    Column('consumed_segment_id', String(100), nullable=True),
+    Index('idx_wait_suggestions_draft_author', 'draft_id', 'author_user_id'),
+)
+
+wait_votes = Table(
+    'wait_votes',
+    metadata,
+    Column('vote_id', String(100), primary_key=True),
+    Column('draft_id', String(100), nullable=False, index=True),
+    Column('segment_id', String(100), nullable=False, index=True),
+    Column('voter_user_id', String(100), nullable=False, index=True),
+    Column('value', Integer, nullable=False),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    UniqueConstraint('segment_id', 'voter_user_id', name='uq_segment_voter'),
+    Index('idx_wait_votes_draft', 'draft_id'),
+)
+
 # Plans table (Phase 4.1 - Monetization Hooks)
 plans = Table(
     'plans',

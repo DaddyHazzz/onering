@@ -59,6 +59,20 @@ def split_long_block(text: str, max_chars: int, separator: str = "\n") -> list[s
     current = ""
     
     for line in lines:
+        # If single line is > max_chars, force split it
+        if len(line) > max_chars:
+            # Add current chunk if exists
+            if current:
+                chunks.append(current)
+                current = ""
+            # Force split the oversized line into multiple chunks
+            while len(line) > max_chars:
+                chunks.append(line[:max_chars])
+                line = line[max_chars:]
+            if line:
+                current = line
+            continue
+        
         if not current:
             current = line
         elif len(current) + len(separator) + len(line) <= max_chars:
@@ -70,7 +84,7 @@ def split_long_block(text: str, max_chars: int, separator: str = "\n") -> list[s
     if current:
         chunks.append(current)
     
-    return chunks or [text[:max_chars]]  # Fallback for single line > max_chars
+    return chunks
 
 def validate_block_length(block: FormatBlock, platform: Platform) -> tuple[bool, Optional[str]]:
     """Validate block against platform constraints.

@@ -60,12 +60,12 @@ class FormatService:
         
         outputs = {}
         for platform in platforms:
-            logger.debug(f"[format] platform={platform.value}, draft_id={draft.id}")
+            logger.debug(f"[format] platform={platform.value}, draft_id={draft.draft_id}")
             output = self._format_for_platform(draft, platform, options)
             outputs[platform.value] = output
         
         return FormatGenerateResponse(
-            draft_id=draft.id,
+            draft_id=draft.draft_id,
             outputs=outputs
         )
 
@@ -114,22 +114,22 @@ class FormatService:
 
     def _segment_to_blocks(
         self,
-        segment: dict,
+        segment,  # DraftSegment Pydantic model
         platform: Platform,
         options: FormatOptions,
     ) -> list[FormatBlock]:
         """Convert a draft segment to one or more FormatBlock(s).
         
-        A segment typically has:
-        - content_type: "text", "image", "code", etc.
-        - text: main text content
-        - metadata: platform hints, etc.
+        A segment is a DraftSegment Pydantic model with:
+        - content: main text content
+        - (no content_type or metadata fields in current model)
         """
         blocks = []
         template = PLATFORMS[platform]
         
-        content_type = segment.get("content_type", "text")
-        text = segment.get("text", "").strip()
+        # DraftSegment has 'content' field, not 'text'
+        content_type = "text"  # Default since DraftSegment doesn't have content_type
+        text = segment.content.strip()
         
         if not text:
             return blocks
@@ -174,15 +174,24 @@ class FormatService:
         
         return blocks
 
-    def _extract_hashtags(self, segment: dict) -> list[str]:
-        """Extract hashtags from segment metadata."""
-        metadata = segment.get("metadata", {})
-        return metadata.get("hashtags", [])
+    def _extract_hashtags(self, segment) -> list[str]:
+        """Extract hashtags from segment content (DraftSegment has no metadata field)."""
+        # Since DraftSegment doesn't have metadata, extract from content text
+        import re
+        hashtag_pattern = r'#(\w+)'
+        return re.findall(hashtag_pattern, segment.content)
 
-    def _extract_cta(self, segment: dict) -> Optional[str]:
-        """Extract CTA from segment metadata."""
-        metadata = segment.get("metadata", {})
-        return metadata.get("cta")
+    def _extract_cta(self, segment) -> Optional[str]:
+        """Extract CTA from segment content (DraftSegment has no metadata field)."""
+        # Look for common CTA patterns in content text
+        content_lower = segment.content.lower()
+        cta_keywords = ['join', 'subscribe', 'follow', 'click', 'visit', 'check out', 'learn more']
+        # Simple heuristic: if content ends with CTA-like sentence, extract it
+        sentences = segment.content.split('.')
+        last_sentence = sentences[-1].strip() if sentences else ''
+        if any(keyword in last_sentence.lower() for keyword in cta_keywords):
+            return last_sentence
+        return None
 
     def _enforce_constraints(
         self,

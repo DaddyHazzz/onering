@@ -419,7 +419,7 @@ describe("PlatformVersionsPanel", () => {
     });
 
     it("should export TXT format", () => {
-      const txt Button = screen.getByRole("button", { name: "Export TXT" });
+      const txtButton = screen.getByRole("button", { name: "Export TXT" });
       fireEvent.click(txtButton);
 
       // Verify export was initiated (would need to check if file download was triggered)

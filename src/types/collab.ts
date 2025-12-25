@@ -47,6 +47,74 @@ export interface CollabDraft {
     avgMinutesBetweenPasses?: number;
     lastActivityAt?: string;
   };
+
+/**
+ * Wait Mode types - for non-ring holders
+ * Phase 8.4: "Waiting for the Ring" mode
+ */
+
+export type SuggestionKind = "idea" | "rewrite" | "next_segment" | "title" | "cta";
+export type SuggestionStatus = "queued" | "consumed" | "dismissed";
+
+export interface ScratchNote {
+  note_id: string;
+  draft_id: string;
+  author_user_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QueuedSuggestion {
+  suggestion_id: string;
+  draft_id: string;
+  author_user_id: string;
+  kind: SuggestionKind;
+  content: string;
+  status: SuggestionStatus;
+  created_at: string;
+  consumed_at?: string;
+  consumed_by_user_id?: string;
+  consumed_segment_id?: string;
+}
+
+export interface SegmentVote {
+  vote_id: string;
+  draft_id: string;
+  segment_id: string;
+  voter_user_id: string;
+  value: 1 | -1;
+  created_at: string;
+}
+
+export interface CreateNoteRequest {
+  content: string;
+}
+
+export interface UpdateNoteRequest {
+  content: string;
+}
+
+export interface CreateSuggestionRequest {
+  kind: SuggestionKind;
+  content: string;
+}
+
+export interface VoteRequest {
+  value: 1 | -1;
+}
+
+export interface VoteSummary {
+  segment_id: string;
+  upvotes: number;
+  downvotes: number;
+  user_vote?: 1 | -1;
+}
+
+export interface DraftVotesResponse {
+  draft_id: string;
+  segments: VoteSummary[];
+}
 }
 
 export interface CollabDraftRequest {
