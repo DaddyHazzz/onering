@@ -7,7 +7,7 @@ All operations emit events following .ai/events.md pattern.
 import uuid
 import os
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any, Tuple
 import hashlib
 from backend.models.collab import (
     CollabDraft,
@@ -17,14 +17,19 @@ from backend.models.collab import (
     DraftStatus,
     SegmentAppendRequest,
     RingPassRequest,
+    SmartRingPassRequest,
+    SmartPassStrategy,
 )
 from backend.features.collaboration.persistence import DraftPersistence
 from backend.core.config import settings
-from backend.core.errors import NotFoundError, PermissionError, ValidationError, RingRequiredError, LimitExceededError
+from backend.core.errors import NotFoundError, PermissionError, ValidationError, RingRequiredError, LimitExceededError, ConflictError
 from backend.features.audit.service import record_audit_event
 from backend.core.logging import get_request_id, log_event
 from backend.core.metrics import collab_mutations_total, ws_messages_sent_total
 from backend.core.tracing import start_span
+
+# Smart pass idempotency: store (draft_id, user_id, idempotency_key) -> selection decision
+_smart_pass_idempotency: Dict[str, Dict[str, Any]] = {}
 
 # In-memory stub store (fallback when DB not available)
 _drafts_store: Dict[str, CollabDraft] = {}
@@ -582,6 +587,187 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
         collab_mutations_total.inc(labels={"type": "pass_ring"})
 
         return updated_draft
+
+
+def _compute_user_last_activity(draft: CollabDraft, user_id: str) -> Optional[datetime]:
+    """Compute last activity timestamp for a user within the draft.
+    Activity considered: last segment authored or last time they held the ring (approx).
+    If no activity, returns None.
+    """
+    # Last segment time
+    seg_times = [seg.created_at for seg in draft.segments if (seg.author_user_id or seg.user_id) == user_id]
+    last_seg = max(seg_times) if seg_times else None
+    # We don't have per-user hold timestamps; approximate using draft.ring_state.last_passed_at
+    # If user is current holder, treat last activity as now-ish: draft.updated_at
+    if draft.ring_state.current_holder_id == user_id:
+        holder_time = draft.updated_at
+    else:
+        holder_time = None
+    # Choose max of known signals
+    candidates = [t for t in [last_seg, holder_time] if t is not None]
+    return max(candidates) if candidates else None
+
+
+def _select_next_holder(draft: CollabDraft, strategy: SmartPassStrategy) -> Tuple[Optional[str], str]:
+    """Select next ring holder based on strategy. Returns (user_id, reason).
+    Candidates: creator + accepted collaborators, excluding current holder.
+    Deterministic tie-breaking by lexicographic user_id.
+    """
+    current = draft.ring_state.current_holder_id
+    candidates = [draft.creator_id] + list(draft.collaborators)
+    candidates = [u for u in candidates if u != current]
+    # No candidates available
+    if not candidates:
+        return None, "No eligible recipients (only current holder present)."
+
+    # Deterministic ordering
+    candidates_sorted = sorted(candidates)
+
+    if strategy == SmartPassStrategy.BACK_TO_CREATOR:
+        # If creator is not current holder, choose creator; else choose first collaborator deterministically
+        if draft.creator_id != current:
+            return draft.creator_id, "Back to creator: returning the ring to the draft owner."
+        # Creator holds ring; pick first collaborator deterministically
+        first_collab = next((u for u in candidates_sorted if u != draft.creator_id), None)
+        if first_collab:
+            return first_collab, "Creator already holds ring; selecting first collaborator."
+        return None, "No collaborators to pass to."
+
+    if strategy in (SmartPassStrategy.MOST_INACTIVE, SmartPassStrategy.BEST_NEXT):
+        # BEST_NEXT falls back to MOST_INACTIVE deterministically if AI not active at service level
+        inactivity_scores = []
+        for u in candidates_sorted:
+            last_act = _compute_user_last_activity(draft, u)
+            # None means never active → highest inactivity (prefer)
+            # We sort by (has_activity, last_activity_time) ascending where has_activity False comes first
+            has_act = 1 if last_act is not None else 0
+            inactivity_scores.append((has_act, last_act or datetime.min.replace(tzinfo=timezone.utc), u))
+        # Sort by has_activity (0 first), then by oldest last activity, then by user_id lexicographically
+        inactivity_scores.sort(key=lambda x: (x[0], x[1], x[2]))
+        chosen = inactivity_scores[0][2]
+        reason = (
+            "Most inactive: selecting a collaborator with the oldest or no activity."
+            if strategy == SmartPassStrategy.MOST_INACTIVE
+            else "Best next (deterministic): selecting least-active collaborator as fallback."
+        )
+        return chosen, reason
+
+    if strategy == SmartPassStrategy.ROUND_ROBIN:
+        # Deterministic round-robin over sorted candidates based on current holder position
+        # Find current in full ring including current to compute next index
+        full_ring = sorted([draft.creator_id] + list(draft.collaborators))
+        if current not in full_ring:
+            full_ring.append(current)
+            full_ring = sorted(full_ring)
+        idx = full_ring.index(current)
+        # Next in ring; skip current if candidates exclude them
+        for offset in range(1, len(full_ring) + 1):
+            next_user = full_ring[(idx + offset) % len(full_ring)]
+            if next_user in candidates_sorted:
+                return next_user, "Round robin: selecting the next collaborator in order."
+        # Fallback to first candidate
+        return candidates_sorted[0], "Round robin fallback: selecting first eligible collaborator."
+
+    # Unknown strategy (should not happen)
+    return candidates_sorted[0], "Default selection: first eligible collaborator."
+
+
+def pass_ring_smart(draft_id: str, from_user_id: str, request: SmartRingPassRequest) -> Dict[str, Any]:
+    """Smart ring passing: select recipient per strategy, then pass via standard flow.
+    
+    Enforces: caller must hold ring. If no eligible candidates, raises 409 ConflictError.
+    
+    Idempotency: same (draft_id, from_user_id, idempotency_key) returns cached result.
+    
+    Args:
+        draft_id: Draft UUID
+        from_user_id: User passing the ring (must be current holder)
+        request: SmartRingPassRequest with strategy and idempotency_key
+    
+    Returns:
+        Dict with:
+        - draft: Updated CollabDraft
+        - selected_to_user_id: User ID selected
+        - strategy_used: Strategy name
+        - reasoning: Explanation
+        - metrics: Candidate count and metadata
+    
+    Raises:
+        NotFoundError: Draft not found
+        PermissionError: Caller doesn't hold ring
+        ConflictError (409): No eligible candidates
+    """
+    # Check idempotency FIRST (before permission check)
+    # This allows replaying the same idempotency key even if the state has changed
+    idempotency_cache_key = f"{draft_id}:{from_user_id}:{request.idempotency_key}"
+    if idempotency_cache_key in _smart_pass_idempotency:
+        return _smart_pass_idempotency[idempotency_cache_key]
+    
+    draft = get_draft(draft_id)
+    if not draft:
+        raise NotFoundError(f"Draft {draft_id} not found")
+
+    if draft.ring_state.current_holder_id != from_user_id:
+        raise PermissionError(f"User {from_user_id} is not ring holder for draft {draft_id}")
+
+    with start_span("collab.pass_ring_smart", {
+        "draft_id": draft_id,
+        "from_user_id": from_user_id,
+        "strategy": request.strategy.value,
+        "allow_ai": request.allow_ai
+    }):
+        to_user_id, reason = _select_next_holder(draft, request.strategy)
+        if not to_user_id:
+            raise ConflictError(
+                "No eligible collaborators to pass the ring to.",
+                code="no_collaborator_candidates",
+                status_code=409,
+                request_id=get_request_id()
+            )
+
+        # Count eligible candidates for metrics
+        all_candidates = [draft.creator_id] + list(draft.collaborators)
+        eligible_candidates = [u for u in all_candidates if u != draft.ring_state.current_holder_id]
+
+        # Reuse standard pass_ring for ring holder update, idempotency, audit, events
+        updated = pass_ring(draft_id, from_user_id, RingPassRequest(
+            to_user_id=to_user_id,
+            idempotency_key=request.idempotency_key
+        ))
+
+        # Build response
+        result = {
+            "draft": updated,
+            "selected_to_user_id": to_user_id,
+            "strategy_used": request.strategy.value,
+            "reasoning": reason,
+            "metrics": {
+                "strategy": request.strategy.value,
+                "candidate_count": len(eligible_candidates),
+                "computed_from": "activity_history",
+            },
+        }
+
+        # Record for idempotency (in-memory, TTL not enforced but acceptable for this session)
+        _smart_pass_idempotency[idempotency_cache_key] = result
+
+        # Enhance audit event with strategy details
+        record_audit_event(
+            action="collab.pass_ring_smart",
+            user_id=from_user_id,
+            draft_id=draft_id,
+            request_id=get_request_id(),
+            metadata={
+                "to_user_id": to_user_id,
+                "strategy": request.strategy.value,
+                "allow_ai": request.allow_ai,
+                "idempotency_key": request.idempotency_key,
+                "candidate_count": len(eligible_candidates),
+                "reasoning": reason,
+            },
+        )
+
+        return result
 
 
 def add_collaborator(draft_id: str, creator_user_id: str, collaborator_id: str, role: str = "contributor") -> CollabDraft:

@@ -12,6 +12,7 @@ from backend.features.collaboration.service import (
     list_drafts,
     append_segment,
     pass_ring,
+    pass_ring_smart,
     add_collaborator,
     generate_share_card,
 )
@@ -19,6 +20,7 @@ from backend.models.collab import (
     CollabDraftRequest,
     SegmentAppendRequest,
     RingPassRequest,
+    SmartRingPassRequest,
 )
 from backend.core.errors import ValidationError, NotFoundError, PermissionError, AppError, RingRequiredError
 from backend.core.auth import get_current_user_id
@@ -97,6 +99,48 @@ async def pass_ring_endpoint(
     try:
         draft = pass_ring(draft_id, user_id, request)
         return {"data": draft.model_dump()}
+    except AppError:
+        raise
+    except Exception as e:
+        raise ValidationError(str(e))
+
+
+@router.post("/drafts/{draft_id}/pass-ring/smart")
+async def pass_ring_smart_endpoint(
+    draft_id: str,
+    request: SmartRingPassRequest,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Smart pass ring to selected user based on strategy (idempotent).
+    
+    Strategies:
+    - most_inactive: Selects collaborator with least activity
+    - round_robin: Cycles through collaborators in deterministic order
+    - back_to_creator: Returns ring to draft owner (or first collaborator if owner holds it)
+    - best_next: Alias to most_inactive when AI is disabled
+    
+    Response includes:
+    - data: Updated CollabDraft
+    - selected_to_user_id: User who receives the ring
+    - strategy_used: Strategy applied
+    - reasoning: Explanation of selection
+    - metrics: Candidate count and decision metadata
+    
+    Errors:
+    - 401: Unauthorized (missing auth header)
+    - 403: Caller doesn't hold ring
+    - 404: Draft not found
+    - 409: No eligible collaborators to pass to
+    """
+    try:
+        result = pass_ring_smart(draft_id, user_id, request)
+        return {
+            "data": result["draft"].model_dump(),
+            "selected_to_user_id": result["selected_to_user_id"],
+            "strategy_used": result["strategy_used"],
+            "reasoning": result["reasoning"],
+            "metrics": result["metrics"],
+        }
     except AppError:
         raise
     except Exception as e:

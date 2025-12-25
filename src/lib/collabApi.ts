@@ -14,6 +14,8 @@ import {
   CollabDraftRequest, 
   SegmentAppendRequest, 
   RingPassRequest,
+  SmartRingPassRequest,
+  SmartRingSelectionMeta,
   AISuggestion,
   FormatGenerateRequest,
   FormatGenerateResponse,
@@ -176,6 +178,36 @@ export async function passRing(
     body: JSON.stringify(request),
   });
   return response.data;
+}
+
+/**
+ * Smart pass ring to selected user based on strategy (idempotent).
+ * Returns updated draft and selection metadata (reasoning).
+ */
+export async function passRingSmart(
+  draftId: string,
+  request: SmartRingPassRequest
+): Promise<SmartRingPassResponse> {
+  try {
+    const response = await apiFetch(`/drafts/${draftId}/pass-ring/smart`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    // Response is already flattened from backend
+    return {
+      data: response.data as CollabDraft,
+      selected_to_user_id: response.selected_to_user_id as string,
+      strategy_used: response.strategy_used as string,
+      reasoning: response.reasoning as string,
+      metrics: response.metrics as SmartRingSelectionMeta,
+    };
+  } catch (error: any) {
+    // Handle 409 specifically
+    if (error.status === 409 && error.code === "no_collaborator_candidates") {
+      throw error;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -402,4 +434,4 @@ export async function listVotes(draftId: string): Promise<DraftVotesResponse> {
   });
   return response.data;
 }
-}
+ 

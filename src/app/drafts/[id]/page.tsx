@@ -7,9 +7,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { getDraft, appendSegment, passRing, isRingRequiredError, addCollaborator } from "@/lib/collabApi";
+import { getDraft, appendSegment, passRing, passRingSmart, isRingRequiredError, addCollaborator } from "@/lib/collabApi";
 import { useDraftRealtime } from "@/hooks/useDraftRealtime";
-import { CollabDraft, APIError } from "@/types/collab";
+import { CollabDraft, APIError, SmartPassStrategy } from "@/types/collab";
 import DraftEditor from "@/components/DraftEditor";
 import AISuggestionsPanel from "@/components/AISuggestionsPanel";
 import SegmentTimeline from "@/components/SegmentTimeline";
@@ -40,6 +40,7 @@ export default function DraftDetailPage() {
   const [ringRequiredError, setRingRequiredError] = useState(false);
   const [appending, setAppending] = useState(false);
   const [passingRing, setPassingRing] = useState(false);
+  const [smartPassing, setSmartPassing] = useState(false);
   const [addingCollaborator, setAddingCollaborator] = useState(false);
 
   // Real-time synchronization
@@ -146,6 +147,29 @@ export default function DraftDetailPage() {
     }
   };
 
+  const handleSmartPass = async (strategy: SmartPassStrategy): Promise<{ to_user_id: string; reason: string }> => {
+    if (!draft) return { to_user_id: "", reason: "Draft not loaded" };
+    try {
+      setSmartPassing(true);
+      const response = await passRingSmart(draftId, {
+        strategy,
+        allow_ai: false,
+        idempotency_key: uuidv4(),
+      });
+      setDraft(response.data);
+      return { to_user_id: response.selected_to_user_id, reason: response.reasoning };
+    } catch (err: any) {
+      if (err.code === "no_collaborator_candidates") {
+        setError("No eligible collaborators to pass the ring to.");
+      } else {
+        setError(err.message || "Failed to smart pass ring");
+      }
+      throw err;
+    } finally {
+      setSmartPassing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-8">
@@ -230,7 +254,8 @@ export default function DraftDetailPage() {
             draft={draft}
             isRingHolder={isRingHolder}
             onPassRing={handlePassRing}
-            isLoading={passingRing}
+            onSmartPass={handleSmartPass}
+            isLoading={passingRing || smartPassing}
           />
 
           {/* Collaborator panel */}

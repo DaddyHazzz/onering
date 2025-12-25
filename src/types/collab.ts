@@ -48,6 +48,8 @@ export interface CollabDraft {
     lastActivityAt?: string;
   };
 
+}
+
 /**
  * Wait Mode types - for non-ring holders
  * Phase 8.4: "Waiting for the Ring" mode
@@ -115,7 +117,6 @@ export interface DraftVotesResponse {
   draft_id: string;
   segments: VoteSummary[];
 }
-}
 
 export interface CollabDraftRequest {
   title: string;
@@ -131,6 +132,29 @@ export interface SegmentAppendRequest {
 export interface RingPassRequest {
   to_user_id: string;
   idempotency_key: string;
+}
+
+// Smart Ring Passing types (Phase 8.5)
+export type SmartPassStrategy = "most_inactive" | "round_robin" | "back_to_creator" | "best_next";
+
+export interface SmartRingPassRequest {
+  strategy: SmartPassStrategy;
+  allow_ai?: boolean;
+  idempotency_key: string;
+}
+
+export interface SmartRingSelectionMeta {
+  strategy: SmartPassStrategy;
+  candidate_count: number;
+  computed_from?: string;
+}
+
+export interface SmartRingPassResponse {
+  data: CollabDraft;
+  selected_to_user_id: string;
+  strategy_used: string;
+  reasoning: string;
+  metrics: SmartRingSelectionMeta;
 }
 
 export interface AISuggestion {

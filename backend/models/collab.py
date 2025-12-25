@@ -107,3 +107,38 @@ class RingPassRequest(BaseModel):
     idempotency_key: str = Field(
         description="UUID, prevents duplicate passes"
     )
+
+
+class SmartPassStrategy(str, Enum):
+    """Strategy for selecting next ring holder"""
+
+    MOST_INACTIVE = "most_inactive"
+    ROUND_ROBIN = "round_robin"
+    BACK_TO_CREATOR = "back_to_creator"
+    BEST_NEXT = "best_next"  # Alias to MOST_INACTIVE when AI disabled
+
+
+class SmartRingPassRequest(BaseModel):
+    """Request to smart-pass ring (idempotent, with selection strategy)"""
+
+    strategy: SmartPassStrategy = Field(default=SmartPassStrategy.MOST_INACTIVE)
+    allow_ai: bool = Field(default=True, description="If true, may use AI to assist selection when available")
+    idempotency_key: str = Field(description="UUID, prevents duplicate passes")
+
+
+class SmartRingSelectionMetadata(BaseModel):
+    """Metadata about ring selection decision"""
+    
+    strategy: str = Field(description="Strategy applied")
+    candidate_count: int = Field(description="Number of eligible recipients")
+    computed_from: str = Field(default="activity_history", description="Data source for decision")
+
+
+class SmartRingPassResponse(BaseModel):
+    """Response from smart ring pass endpoint (backward compatible + flattened fields)"""
+    
+    draft: CollabDraft = Field(description="Updated draft after ring pass")
+    selected_to_user_id: str = Field(description="User ID who will receive the ring")
+    strategy_used: str = Field(description="Strategy applied")
+    reasoning: str = Field(description="Human-readable explanation of selection")
+    metrics: Optional[SmartRingSelectionMetadata] = None
