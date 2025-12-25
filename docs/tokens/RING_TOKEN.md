@@ -1,20 +1,5 @@
-# RING Token Specification
+# Moved
 
-## Purpose
-Utility token powering:
-- Content mining rewards
-- Posting priority
-- Creator tiers
-- Name registry (`you.onering`)
+This document is no longer maintained.
 
-## Distribution
-- 40% Community Rewards  
-- 20% Team & Dev  
-- 20% Treasury  
-- 10% Ecosystem Grants  
-- 10% Exchange Liquidity  
-
-## Utility Examples
-- Boost content visibility
-- Pay for premium tools
-- Claim creator handles
+Canonical documentation lives in **.ai/** → see **[.ai/README.md](../../.ai/README.md)**.

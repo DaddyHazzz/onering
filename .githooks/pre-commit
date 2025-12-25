@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
+# Safety: default to fast gate; docs mode skips; full only when ONERING_GATE=full. Tests never run directly here.
 set -euo pipefail
 
-echo "Running tests before commit..."
-./scripts/run_tests.sh
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+MODE="${ONERING_GATE:-fast}"
+
+if [[ "$MODE" == "docs" ]]; then
+	echo "[pre-commit] DOCS mode: skipping automated tests."
+	exit 0
+fi
+
+if [[ "$MODE" != "fast" && "$MODE" != "full" ]]; then
+	echo "[pre-commit] Unknown ONERING_GATE='$MODE'. Use fast|full|docs."
+	exit 1
+fi
+
+echo "[pre-commit] Running gate (mode=$MODE)..."
+pnpm gate -- --mode "$MODE"
+exit $?

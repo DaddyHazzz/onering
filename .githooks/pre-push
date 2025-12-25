@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Safety: do nothing by default; full gate runs only when ONERING_GATE=full via PowerShell shim.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+MODE="${ONERING_GATE:-skip}"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "$REPO_ROOT/.githooks/pre-push.ps1" -Mode "$MODE"
+exit $?

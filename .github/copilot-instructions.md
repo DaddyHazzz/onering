@@ -36,6 +36,13 @@ Short, actionable guidance for all AI agents (Grok, ChatGPT, Gemini, GitHub Copi
 - **Key services:** Groq (LLM), Stripe (payments), X/Twitter (posting), Clerk (auth), PostgreSQL + pgvector (data)
 - **Deployment:** Local dev (next dev + uvicorn), Docker/K8s ready in `infra/`
 
+## Hard Rules (Agent Safety)
+- Never type markdown into a shell; the shell is for commands only.
+- Never use Set-Content with here-strings.
+- Never delete files unless explicitly instructed.
+- Never run full tests unless the user asks.
+- Never create more than one commit per task.
+
 ✅ **Update (Dec 2025):** Phase 3.4 analytics/leaderboard is complete. Backend analytics tests (49) and frontend tests (298) are passing. See `PROJECT_STATE.md` for canonical details.
 
 ## Architecture at a Glance
@@ -529,7 +536,7 @@ All AI agents must:
 6. **Validate with latest context.md** and .ai/context.md for environment details
 
 ## Questions?
-Refer to `.ai/context.md` for detailed environment setup, or run `/docs/AGENTS_OVERVIEW.md` for full agent specs. Open an issue or PR if guidance here conflicts with actual code state.
+Refer to `.ai/context.md` for detailed environment setup, or read `.ai/TASKS.md` + `.ai/AGENT_BRIEF.md` for full agent specs. Open an issue or PR if guidance here conflicts with actual code state.
 
 
 

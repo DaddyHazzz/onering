@@ -1,39 +1,33 @@
 # Testing Strategy & Gates
 
-**Principle:** GREEN ALWAYS. Fast gates before local commits, full gates before pushes. No skipped tests. No `--no-verify`.
+**Principle:** GREEN ALWAYS. Fast gates while iterating, one full gate before the final commit/push. No skipped tests. No `--no-verify`.
 
-**Test Counts:**
-- Backend: 617 tests (100%)
-- Frontend: 388 tests (100%)
-- **Total: 1005 tests**
+**Test Counts (Dec 25, 2025):**
+- Backend: 618 tests (100%)
+- Frontend: 395 tests (100%)
+- **Total: 1013 tests**
 - Status: All green, zero skips
 
 ## Quick Start
 
 ### Run Tests Locally
 
-**Fast gate (changed files only):**
+**Fast gate (changed files only, default):**
 ```powershell
-# Frontend only
-pnpm test:ui:changed --run
-
-# Backend only  
-pytest backend/tests -q --tb=no -k "test_*" --co | head -20
-
-# Both (sequential, ~15 seconds)
-./scripts/gate.ps1
+# Both (changed-only)
+pnpm gate -- --mode fast
+# or: ONERING_GATE=fast pnpm gate
 ```
 
-**Full gate (all tests):**
+**Full gate (all tests, run once before final commit/push):**
 ```powershell
-# Backend (617 tests, ~2 min)
-pytest backend/tests -q --tb=no
+pnpm gate -- --mode full
+# or: ONERING_GATE=full pnpm gate
+```
 
-# Frontend (388 tests, ~8 sec)
-pnpm test -- --run
-
-# Both (sequential, ~2.5 min)
-./scripts/gate.ps1 -Full
+**Docs-only gate (skip tests):**
+```powershell
+ONERING_GATE=docs pnpm gate -- --mode docs
 ```
 
 **Single file/test:**
@@ -53,30 +47,36 @@ pnpm test -- --run -t "calls onRefresh after action"
 
 ## Gate Scripts
 
+### Git Hooks (core.hooksPath = .githooks/)
+- `pre-commit`: runs `pnpm gate --mode fast` by default; respects `ONERING_GATE` (`docs` skips, `full` runs full gate).
+- `pre-push`: opt-in. Set `ONERING_GATE=full` to run the full gate before push; otherwise it is a no-op.
+- `commit-msg`: none (no tests).
+- Goal: no surprise full runs; you choose the mode via `ONERING_GATE` or `--mode`.
+
+### Everyday Loop & Commit Policy
+- Iterate with `pnpm gate -- --mode fast` (or `ONERING_GATE=fast`) while coding.
+- For doc-only updates, use `ONERING_GATE=docs` (skips tests) when invoking the gate or committing.
+- Before the final commit/push, run exactly one full gate: `pnpm gate -- --mode full`.
+- Keep commits atomic: one commit for the change-set (docs-only commit is fine when using `docs` mode).
+
 ### `./scripts/gate.ps1` (PowerShell)
 
-**Fast gate (default):**
-```powershell
-./scripts/gate.ps1
-```
-- Runs tests on changed files only
-- ~15–30 seconds
-- Great for local verification before commit
+**Mode switcher (env or arg):**
+- `--mode fast` (default) → changed-only tests
+- `--mode full` → full backend + frontend
+- `--mode docs` → skip tests (for doc-only commits)
 
-**Full gate:**
+Examples:
 ```powershell
-./scripts/gate.ps1 -Full
+pnpm gate -- --mode fast          # default
+pnpm gate -- --mode full          # run once before final commit/push
+ONERING_GATE=docs pnpm gate       # skip tests for doc-only updates
 ```
-- Runs all backend + frontend tests
-- ~2.5 minutes
-- Required before push to main
 
-**What it does:**
-1. Stages changes if working directory is clean
-2. Detects which files changed (Python modules → test files, TypeScript files → vitest files)
-3. Runs subset of tests (fast gate) or all (full gate)
-4. Reports PASS/FAIL
-5. Provides clear summary
+Behavior:
+- Fast uses `scripts/test_changed.py` to map changed files → tests
+- Full runs `python -m pytest backend/tests -q --tb=no` then `pnpm vitest run`
+- Docs exits 0 immediately (use intentionally for doc-only changes)
 
 ### `scripts/test_changed.py` (Python Helper)
 

@@ -15,7 +15,7 @@
 | **What's the plan?** | [ROADMAP.md](ROADMAP.md) | Next phases, priorities |
 | **What's the status?** | [PROJECT_STATE.md](PROJECT_STATE.md) | Latest test counts + date |
 | **Why design X?** | [DECISIONS.md](DECISIONS.md) | Architecture + trade-off rationale |
-| **Phase history** | [PHASES/](PHASES/) | Phase 8+ detailed specs |
+| **Phase history** | [PHASES/](PHASES/) | Active specs + archives in PHASES/COMPLETED |
 | **Agent tasks** | [TASKS.md](TASKS.md) | Fast tasks vs. agent delegations |
 | **Agent template** | [AGENT_BRIEF.md](AGENT_BRIEF.md) | How to brief a background agent |
 
@@ -83,6 +83,7 @@ Old docs (root + `/docs/`) → New canonical (`.ai/`):
 ✅ **Windows-friendly:** All scripts support PowerShell 5.1+.  
 ✅ **Deterministic:** Stable selectors, no flaky timeouts.  
 ✅ **Single source:** If it's not in `.ai/`, it's not canonical.  
+✅ **Choose your gate:** `ONERING_GATE=fast|full|docs` controls hooks; pre-commit runs fast by default, pre-push runs full only if `full`.
 
 ## Questions?
 
