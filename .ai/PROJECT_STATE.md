@@ -1,22 +1,82 @@
 # Project State (Canonical)
 
-**Last Updated:** December 25, 2025 @ 15:30 UTC  
-**Status:** Phase 9.6 COMPLETE. **Phase 10 PLANNING COMPLETE** (execution approval pending). All tests passing (618 backend + 395 frontend = 1013 total).
+**Last Updated:** December 25, 2025 @ 16:45 UTC  
+**Status:** Phase 10.3 COMPLETE. All tests passing (645 backend + 395 frontend = 1040 total).
 
 ## Test Coverage
 
 | Metric | Count | Status |
 |--------|-------|--------|
-| Backend Tests | 618/618 | ✅ 100% |
+| Backend Tests | 645/645 | ✅ 100% |
 | Frontend Tests | 395/395 | ✅ 100% |
-| **Total** | **1013/1013** | ✅ **100%** |
+| **Total** | **1040/1040** | ✅ **100%** |
 | Skipped | 0 | ✅ ZERO |
 | --no-verify bypasses | 0 | ✅ ZERO |
 
-**Last Full Run:** December 25, 2025 @ 11:48 UTC  
-**Duration:** ~2.5 minutes (sequential: backend ~2m 53s + frontend ~7s)
+**Last Full Run:** December 25, 2025 @ 16:45 UTC  
+**Duration:** ~3 minutes (sequential: backend ~3m 10s + frontend ~7s)
 
 ## Current Phase Status
+
+### ✅ Phase 10.3: External Platform Surface Area
+**Shipped:** December 25, 2025  
+**Commit:** `feat(phase10.3): add external read-only API and webhooks with signing`
+
+**Parts Completed:**
+
+**Part A: External Read-Only API**
+- Created 6 external endpoints under `/v1/external/*`
+- Endpoints: `/me` (whoami), `/rings` (list), `/rings/{id}` (detail), `/drafts`, `/ledger`, `/enforcement`
+- Bearer token authentication with API key validation
+- Scope enforcement: `read:rings`, `read:drafts`, `read:ledger`, `read:enforcement`
+- Rate limiting: free (100/hr), pro (1000/hr), enterprise (10000/hr)
+- DB-backed rate limit tracking with hourly windows
+
+**Part B: API Key System**
+- Created `external_api_keys` table with bcrypt-hashed keys
+- API key format: `osk_<base64_random>` (OneRing Secret Key)
+- Separate `key_id` for fast lookup without hashing
+- Full key only shown once on creation (security best practice)
+- Admin endpoints for key creation, revocation, and listing
+- Blocklist table for key/IP bans (`external_api_blocklist`)
+
+**Part C: Webhook System**
+- Created `external_webhooks` and `webhook_deliveries` tables
+- Webhook secret format: `whsec_<hex64>`
+- HMAC-SHA256 signing with format `v1,<hex_signature>`
+- Signed data: `<timestamp>.<json_payload>`
+- Signature verification with 300s tolerance (replay protection)
+- Event types: `draft.published`, `ring.passed`, `ring.earned`, `enforcement.failed`
+- Retry policy: 3 attempts with delays [60s, 300s, 900s], 10s timeout per attempt
+- At-least-once delivery semantics with status tracking
+- Admin endpoints for webhook subscription management
+
+**Part D: Safety & Controls**
+- Kill switches: `ONERING_EXTERNAL_API_ENABLED=0` (default), `ONERING_WEBHOOKS_ENABLED=0` (default)
+- External API returns 503 when disabled
+- Webhooks not emitted when disabled
+- Rate limit enforcement with 429 response
+- Scope enforcement with 403 response
+- Invalid key returns 401 response
+
+**Part E: Tests**
+- Comprehensive test suite: 27 tests covering all functionality
+- Test coverage: API key generation/validation, scope enforcement, rate limiting, webhook signing/verification, kill switches
+- All tests passing (5.48s runtime)
+
+**Database Tables Added:**
+- `external_api_keys` (API key storage with bcrypt hashing)
+- `external_webhooks` (webhook subscriptions)
+- `webhook_deliveries` (delivery tracking and retries)
+- `external_api_rate_limits` (hourly rate limit windows)
+- `external_api_blocklist` (banned keys/IPs)
+
+**Impact:**
+- External developers can access OneRing data via read-only API
+- Webhook system enables real-time event notifications
+- Kill switches provide safe rollout control
+- Rate limiting prevents abuse
+- All systems disabled by default for production safety
 
 ### ✅ Phase 9.6: Governance, Hooks, Safety Contracts
 **Shipped:** December 25, 2025  

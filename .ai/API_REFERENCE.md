@@ -48,6 +48,149 @@ Last Updated: December 25, 2025
 
 - GET /api/insights/drafts/{draft_id}
   - Draft insights, recommendations, alerts
+
+  ## External Platform API (Phase 10.3)
+
+  ### Authentication
+  - All `/v1/external/*` endpoints require Bearer token authentication
+  - Format: `Authorization: Bearer osk_<key>`
+  - API keys created via admin endpoints (see below)
+  - Keys have scopes and rate limit tiers
+
+  ### Available Scopes
+  - `read:rings` — Access ring balances and transactions
+  - `read:drafts` — Access draft metadata
+  - `read:ledger` — Access token ledger entries
+  - `read:enforcement` — Access enforcement statistics
+
+  ### Rate Limit Tiers
+  - **free:** 100 requests per hour
+  - **pro:** 1000 requests per hour
+  - **enterprise:** 10000 requests per hour
+
+  ### External Endpoints
+
+  - GET /v1/external/me
+    - Whoami endpoint
+    - Returns: { key_id, scopes, rate_limit: { current, limit, resets_at } }
+
+  - GET /v1/external/rings
+    - List rings for authenticated user
+    - Requires: `read:rings` scope
+    - Returns: [{ id, balance, earned, staked }]
+
+  - GET /v1/external/rings/{ring_id}
+    - Ring detail with ownership check
+    - Requires: `read:rings` scope
+    - Returns: { id, balance, earned, staked, transactions: [] }
+
+  - GET /v1/external/drafts
+    - List draft metadata
+    - Requires: `read:drafts` scope
+    - Query: limit, offset (pagination)
+    - Returns: { drafts: [], total }
+
+  - GET /v1/external/ledger
+    - Token ledger entries
+    - Requires: `read:ledger` scope
+    - Query: limit, offset (pagination, default limit=20)
+    - Returns: { entries: [{ id, amount, balance_before, balance_after, timestamp }], total }
+
+  - GET /v1/external/enforcement
+    - Enforcement statistics
+    - Requires: `read:enforcement` scope
+    - Returns: { pass_count, fail_count, pass_rate }
+
+  ### Admin Endpoints (API Key Management)
+
+  - POST /v1/admin/external/keys
+    - Create API key
+    - Requires: Admin auth (X-Admin-Key header)
+    - Body: { owner_user_id, scopes: string[], tier: "free"|"pro"|"enterprise", expires_in_days?: number }
+    - Returns: { key_id, full_key, scopes, tier, created_at, expires_at }
+    - **Note:** Full key only returned once
+
+  - POST /v1/admin/external/keys/{key_id}/revoke
+    - Revoke API key
+    - Requires: Admin auth
+    - Returns: { success: true }
+
+  - GET /v1/admin/external/keys/{owner_user_id}
+    - List user's API keys
+    - Requires: Admin auth
+    - Returns: [{ key_id, scopes, tier, is_active, created_at, last_used_at }]
+
+  - POST /v1/admin/external/webhooks
+    - Create webhook subscription
+    - Requires: Admin auth
+    - Body: { owner_user_id, url, events: string[] }
+    - Returns: { id, url, secret, events, created_at }
+    - **Note:** Secret only returned once
+
+  - GET /v1/admin/external/webhooks/{owner_user_id}
+    - List user's webhooks
+    - Requires: Admin auth
+    - Returns: [{ id, url, events, is_active, created_at }]
+
+  - DELETE /v1/admin/external/webhooks/{webhook_id}
+    - Delete webhook subscription
+    - Requires: Admin auth
+    - Returns: { success: true }
+
+  ### Webhook Events
+
+  Events emitted when enabled (ONERING_WEBHOOKS_ENABLED=1):
+  - `draft.published` — Draft published to platform
+  - `ring.passed` — Ring passed to collaborator
+  - `ring.earned` — RING tokens earned
+  - `enforcement.failed` — Agent enforcement action failed
+
+  ### Webhook Signature Verification
+
+  Webhooks are signed with HMAC-SHA256. Verify using:
+
+  ```python
+  import hmac
+  import hashlib
+  import json
+
+  def verify_webhook(payload_bytes, signature_header, secret):
+      """Verify webhook signature."""
+      if not signature_header.startswith("v1,"):
+          return False
+    
+      expected_sig = signature_header.split(",", 1)[1]
+    
+      # Extract timestamp from payload
+      payload_dict = json.loads(payload_bytes)
+      timestamp = payload_dict.get("_timestamp")
+    
+      # Reconstruct signed data
+      signed_data = f"{timestamp}.{payload_bytes.decode()}"
+    
+      # Compute signature
+      computed_sig = hmac.new(
+          secret.encode(),
+          signed_data.encode(),
+          hashlib.sha256
+      ).hexdigest()
+    
+      return hmac.compare_digest(computed_sig, expected_sig)
+  ```
+
+  Headers sent with webhooks:
+  - `X-OneRing-Signature` — HMAC signature (v1,<hex>)
+  - `X-OneRing-Event-Type` — Event type (draft.published, etc.)
+  - `X-OneRing-Event-ID` — Unique event identifier
+  - `X-OneRing-Timestamp` — Unix timestamp
+
+  ### Kill Switches
+
+  Both external API and webhooks are disabled by default for safety:
+  - `ONERING_EXTERNAL_API_ENABLED=0` (default) — External API returns 503
+  - `ONERING_WEBHOOKS_ENABLED=0` (default) — No webhook events emitted
+
+  Enable explicitly when ready for production use.
   - Auth: Collaborators only (creator + invited collaborators)
   - Query: optional `now` (ISO8601) for deterministic tests
   - Returns:
