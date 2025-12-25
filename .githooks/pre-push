@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safety: do nothing by default; full gate runs only when ONERING_GATE=full via PowerShell shim.
+# Safety: hooks are opt-in; default skip. Full gate runs only when ONERING_GATE=full (or skip when ONERING_HOOKS=0).
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"

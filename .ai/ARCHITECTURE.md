@@ -1,3 +1,5 @@
+Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
+
 # Architecture
 
 ## System Diagram
@@ -231,8 +233,8 @@ Frontend: POST /api/collab/drafts/{id}/ring/pass
 Backend: pass_ring(target_user_id)
   - Update ring_state.current_holder_id
   - Add to ring_state.holders_history
-  - Update ring_state.passed_at = now
   - Emit RingPassed event
+  - Update ring_state.passed_at = now
   ↓
 Analytics: reduce_draft_analytics()
   - Recompute passed count, hold durations

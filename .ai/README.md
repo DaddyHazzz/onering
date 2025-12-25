@@ -16,6 +16,7 @@
 | **What's the status?** | [PROJECT_STATE.md](PROJECT_STATE.md) | Latest test counts + date |
 | **Why design X?** | [DECISIONS.md](DECISIONS.md) | Architecture + trade-off rationale |
 | **Phase history** | [PHASES/](PHASES/) | Active specs + archives in PHASES/COMPLETED |
+| **Agent system** | [AGENTS_OVERVIEW.md](AGENTS_OVERVIEW.md) | Strategy, Research, Writer, QA agents + more |
 | **Agent tasks** | [TASKS.md](TASKS.md) | Fast tasks vs. agent delegations |
 | **Agent template** | [AGENT_BRIEF.md](AGENT_BRIEF.md) | How to brief a background agent |
 
@@ -32,6 +33,7 @@
   PROJECT_STATE.md            <- Current status + test counts
   DECISIONS.md                <- Design decisions + rationale
   TASKS.md                    <- Task board (fast + agent)
+  AGENTS_OVERVIEW.md          <- Agent system (Strategy, Research, Writer, QA, etc.)
   AGENT_BRIEF.md              <- Agent work template
   PHASES/
     PHASE_8.md                <- Phase 8 rollup (8.4–8.7.1b)

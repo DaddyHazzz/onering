@@ -1,3 +1,6 @@
+
+Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
+
 # OneRing Roadmap — Feature Tiers
 
 ## Tier 1 — Daily Pull (Addiction)
@@ -63,3 +66,4 @@
 - Behavior: Constrain prompts and output to user-defined values; filters tone and topics to align with identity.
 - Pull: Integrity and alignment increase trust and consistency.
 - Systems: Archetypes, AI behavior constraints, generation guardrails.
+

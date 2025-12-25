@@ -324,6 +324,30 @@ backend/
 
 ---
 
+## 11. Canonical Documentation Policy (Established Dec 25, 2025)
+
+**Decision:** `.ai/` is the single source of truth for all documentation. `docs/` is legacy compatibility only.
+
+**Rules:**
+- All canonical docs live in `.ai/`
+- `docs/` files are stubs pointing to `.ai/` counterparts
+- Historical phase artifacts (PHASE*.md) live only in `.ai/PHASES/COMPLETED/`
+- No shell-based doc manipulation allowed (prevents accidental merges, duplicates)
+- All doc migrations must be manual and explicitly reviewed
+
+**Rationale:**
+- Centralized reduces duplication and merge conflicts
+- Stubs prevent accidental edits to wrong files
+- Historical archives remain queryable but out of the way
+- Manual migrations enforce intentionality
+
+**See:**
+- [.ai/](../ai/) — All canonical docs
+- [.ai/PHASES/COMPLETED/](../ai/PHASES/COMPLETED/) — Historical phase reports
+- [docs/](../docs/) — Stubs and legacy compatibility only
+
+---
+
 ## When to Revisit These Decisions
 
 **Revisit if:**

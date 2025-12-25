@@ -2,33 +2,46 @@ param(
     [string]$Mode
 )
 
-# Safety: default to fast gate; docs mode skips; full only when ONERING_GATE=full. Do not run tests directly here.
+# Safety: hooks are opt-in. If ONERING_GATE is unset, skip. Set ONERING_HOOKS=0 to disable. No direct test commands here.
 
 $repoRoot = git rev-parse --show-toplevel
 Push-Location $repoRoot
 
+if ($env:ONERING_HOOKS -eq "0") {
+    Write-Host "[pre-commit] Hooks disabled via ONERING_HOOKS=0; skipping." -ForegroundColor Yellow
+    Pop-Location
+    exit 0
+}
+
 $resolvedMode = $Mode
 if (-not $resolvedMode -and $env:ONERING_GATE) { $resolvedMode = $env:ONERING_GATE }
-if (-not $resolvedMode) { $resolvedMode = "fast" }
+if (-not $resolvedMode) {
+    Write-Host "[pre-commit] ONERING_GATE not set; skipping tests." -ForegroundColor Yellow
+    Pop-Location
+    exit 0
+}
 $resolvedMode = $resolvedMode.ToLower()
 
 switch ($resolvedMode) {
     "docs" {
-        Write-Host "[pre-commit] DOCS mode: skipping automated tests." -ForegroundColor Yellow
-        Pop-Location
-        exit 0
+        Write-Host "[pre-commit] DOCS mode: running docs gate (no tests)." -ForegroundColor Yellow
+        pnpm gate -- --mode docs
     }
-    "fast" { }
-    "full" { }
+    "fast" {
+        Write-Host "[pre-commit] FAST mode: running changed-only gate." -ForegroundColor Cyan
+        pnpm gate -- --mode fast
+    }
+    "full" {
+        Write-Host "[pre-commit] FULL mode: running full gate." -ForegroundColor Cyan
+        pnpm gate -- --mode full
+    }
     default {
-        Write-Host "[pre-commit] Unknown ONERING_GATE '$resolvedMode'. Use fast|full|docs." -ForegroundColor Red
+        Write-Host "[pre-commit] Unknown ONERING_GATE '$resolvedMode'. Use docs|fast|full." -ForegroundColor Red
         Pop-Location
         exit 1
     }
 }
 
-Write-Host "[pre-commit] Running gate (mode=$resolvedMode)..." -ForegroundColor Cyan
-pnpm gate -- --mode $resolvedMode
 $status = $LASTEXITCODE
 
 if ($status -eq 0) {

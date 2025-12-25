@@ -1,3 +1,6 @@
+
+Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
+
 # API Reference (Canonical)
 
 This document summarizes stable API contracts. For implementation details, see backend route files under backend/api/.
