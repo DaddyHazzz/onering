@@ -340,3 +340,44 @@ export interface DraftAnalyticsDaily {
   days: DailyActivityMetrics[];
   window_days: number;
 }
+
+// ===== Phase 8.7: Insights Types =====
+
+export type InsightType = "stalled" | "dominant_user" | "low_engagement" | "healthy";
+export type InsightSeverity = "critical" | "warning" | "info";
+
+export interface DraftInsight {
+  type: InsightType;
+  severity: InsightSeverity;
+  title: string;
+  message: string;
+  reason: string;
+  metrics_snapshot: Record<string, any>;
+}
+
+export type RecommendationAction = "pass_ring" | "invite_user" | "add_segment" | "review_suggestions";
+
+export interface DraftRecommendation {
+  action: RecommendationAction;
+  target_user_id?: string;
+  reason: string;
+  confidence: number;
+}
+
+export type AlertType = "no_activity" | "long_ring_hold" | "single_contributor";
+
+export interface DraftAlert {
+  alert_type: AlertType;
+  triggered_at: string;
+  threshold: string;
+  current_value: any;
+  reason: string;
+}
+
+export interface DraftInsightsResponse {
+  draft_id: string;
+  insights: DraftInsight[];
+  recommendations: DraftRecommendation[];
+  alerts: DraftAlert[];
+  computed_at: string;
+}

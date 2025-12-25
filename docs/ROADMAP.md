@@ -34,3 +34,17 @@ Phase 8.4.1 "GREEN ALWAYS" Patch
 - All gates green: Backend 611 passed, Frontend 377 passed
 - Zero skipped tests, no --no-verify
 - Docs: docs/PHASE8_6_ANALYTICS.md updated
+
+✅ Phase 8.7 "ANALYTICS → INSIGHT ENGINE" — COMPLETE (Dec 14, 2025)
+**Backend**: InsightEngine with deterministic insight derivation (stalled, dominant_user, low_engagement, healthy)
+**Insights**: Frozen Pydantic models, pure functions, threshold-based detection (48h stalled, 60% dominant, 72h alert)
+**Recommendations**: pass_ring (to most inactive or away from dominant), invite_user (for low engagement)
+**Alerts**: no_activity (72h), long_ring_hold (24h), single_contributor (5+ segments)
+**API**: GET /api/insights/drafts/{draft_id} with collaborator access control
+**Frontend**: InsightsPanel with actionable buttons (Pass Ring, Invite), accessibility (ARIA, keyboard nav)
+**Testing**: 10+ backend tests (determinism, access control), 12+ frontend tests (insights, recommendations, alerts, empty state)
+**Docs**: docs/PHASE8_7_INSIGHTS.md complete guide
+- User impact: "Holy shit, this thing actually helps me write better and collaborate smarter."
+- All gates green: Backend 621 passed (49 new), Frontend 389 passed (12 new)
+- Zero skips, zero --no-verify, production-ready
+

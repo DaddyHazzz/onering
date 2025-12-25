@@ -38,7 +38,7 @@ try:
     from backend.core.middleware.ratelimit import RateLimitMiddleware
     from backend.core.ratelimit import build_rate_limit_config_from_env
     from backend.core.tracing import setup_tracing
-    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode
+    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode, insights
     from backend.agents.viral_thread import generate_viral_thread
     import groq
     from redis import Redis
@@ -103,6 +103,7 @@ app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 # Legacy alias to support direct /v1/analytics/* paths used in tests/clients
 app.include_router(analytics.router, tags=["analytics-legacy"])
+app.include_router(insights.router, tags=["insights"])
 app.include_router(streaks.router, tags=["streaks"])
 app.include_router(challenges.router, tags=["challenges"])
 app.include_router(coach.router, tags=["coach"])

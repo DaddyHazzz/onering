@@ -34,7 +34,12 @@ import {
   CreateSuggestionRequest,
   VoteRequest,
   DraftVotesResponse,
-  SuggestionStatus
+  SuggestionStatus,
+  DraftAnalyticsSummary,
+  DraftAnalyticsContributors,
+  DraftAnalyticsRing,
+  DraftAnalyticsDaily,
+  DraftInsightsResponse
 } from "@/types/collab";
 
 const BASE_URL = "/v1/collab";
@@ -473,6 +478,22 @@ export async function getDraftAnalyticsDaily(draftId: string, days?: number): Pr
   if (days !== undefined) params.append("days", String(days));
   const qs = params.toString() ? `?${params.toString()}` : "";
   const response = await apiFetch<DraftAnalyticsDaily>(`/v1/analytics/drafts/${draftId}/daily${qs}`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+// ===== Phase 8.7: Insights Engine =====
+
+/**
+ * Get actionable insights, recommendations, and alerts for a draft.
+ * 
+ * Requires collaborator access.
+ * Returns insights derived from Phase 8.6 analytics (stalled, dominant user, etc.),
+ * recommendations (pass ring, invite user), and alerts (no activity, long hold).
+ */
+export async function getDraftInsights(draftId: string): Promise<DraftInsightsResponse> {
+  const response = await apiFetch<DraftInsightsResponse>(`/api/insights/drafts/${draftId}`, {
     method: "GET",
   });
   return response.data;

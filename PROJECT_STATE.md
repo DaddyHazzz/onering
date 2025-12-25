@@ -1,9 +1,103 @@
 # OneRing — Project State (Canonical)
 
-**Last Updated:** December 25, 2025 (Phase 8.6.3 Complete — Analytics Panel Tests + Docs)  
-**Status:** Phase 8.6.3 COMPLETE (AnalyticsPanel Vitest + Accessibility) ✅ | Phase 8.6.2 COMPLETE (Daily Zero-Fill Fix) ✅ | Phase 8.6.1 COMPLETE (Analytics Backend + API) ✅ | Phase 8.5 COMPLETE (Smart Ring Pass) ✅ | Phase 8.4 COMPLETE (Wait-for-Ring Mode) ✅ | Phase 8.3 COMPLETE (Timeline + Export) ✅ | Phase 8.2 COMPLETE (Auto-Format for Platform) ✅ | Phase 8.1 COMPLETE (Ring-Aware AI Turn Suggestions) ✅ | Phase 6.2 COMPLETE (Real-Time Collaboration) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅  
-**Test Coverage:** Backend: 611/611 tests passing (100%) ✅ | Frontend: 377/377 tests passing (100%) ✅ | **Total: 988 tests** ✅ | **0 skipped, no --no-verify** ✅ | **Warnings: 8 Pydantic deprecations (non-blocking)** ✅  
+**Last Updated:** December 14, 2025 (Phase 8.7 Complete — Insights Engine)  
+**Status:** Phase 8.7 COMPLETE (Analytics → Insight Engine) ✅ | Phase 8.6.3 COMPLETE (AnalyticsPanel Vitest + Accessibility) ✅ | Phase 8.6.2 COMPLETE (Daily Zero-Fill Fix) ✅ | Phase 8.6.1 COMPLETE (Analytics Backend + API) ✅ | Phase 8.5 COMPLETE (Smart Ring Pass) ✅ | Phase 8.4 COMPLETE (Wait-for-Ring Mode) ✅ | Phase 8.3 COMPLETE (Timeline + Export) ✅ | Phase 8.2 COMPLETE (Auto-Format for Platform) ✅ | Phase 8.1 COMPLETE (Ring-Aware AI Turn Suggestions) ✅ | Phase 6.2 COMPLETE (Real-Time Collaboration) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅  
+**Test Coverage:** Backend: 621/621 tests passing (100%) ✅ | Frontend: 389/389 tests passing (100%) ✅ | **Total: 1010 tests** ✅ | **0 skipped, no --no-verify** ✅ | **Warnings: 8 Pydantic deprecations (non-blocking)** ✅  
 **Python Compatibility:** 3.10+ to 3.14+ ✅
+
+## Phase 8.7: "Analytics → Insight Engine" — COMPLETE ✅
+
+**Shipped:** December 14, 2025  
+**Problem Solved:** Phase 8.6 delivered analytics, but users still had to interpret numbers themselves. Phase 8.7 transforms analytics into actionable intelligence with insights, recommendations, and alerts.
+
+**User Impact:** "Holy shit, this thing actually helps me write better and collaborate smarter."
+
+**What Shipped:**
+
+### Backend (Insights Module)
+1. **Models** (`backend/features/insights/models.py`):
+   - `InsightType`: stalled | dominant_user | low_engagement | healthy
+   - `InsightSeverity`: critical | warning | info
+   - `DraftInsight`: type, severity, title, message, reason, metrics_snapshot (frozen)
+   - `RecommendationAction`: pass_ring | invite_user | add_segment | review_suggestions
+   - `DraftRecommendation`: action, target_user_id, reason, confidence (frozen)
+   - `AlertType`: no_activity | long_ring_hold | single_contributor
+   - `DraftAlert`: alert_type, triggered_at, threshold, current_value, reason (frozen)
+   - `DraftInsightsResponse`: insights[], recommendations[], alerts[], computed_at
+
+2. **Service** (`backend/features/insights/service.py`):
+   - `InsightEngine` class with deterministic computation (pure functions)
+   - `compute_draft_insights(draft_id, now=None)`: Main entry point, accepts frozen time for testing
+   - `_derive_insights()`: Detects stalled (48h), dominant user (>60%), low engagement (1 contributor), healthy
+   - `_generate_recommendations()`: Pass ring to most inactive or away from dominant, invite user for low engagement
+   - `_compute_alerts()`: No activity (72h), long hold (24h), single contributor (5+ segments)
+   - `_find_most_inactive_user()`: Deterministic tie-breaking (fewest segments → alphabetical)
+   - Thresholds: STALLED_HOURS=48, ALERT_NO_ACTIVITY_HOURS=72, ALERT_LONG_HOLD_HOURS=24, DOMINANT_USER_THRESHOLD=0.6
+
+3. **API** (`backend/api/insights.py`):
+   - GET /api/insights/drafts/{draft_id}: Returns DraftInsightsResponse
+   - Collaborator access control (403 for non-collaborators)
+   - Dependency injection: InsightEngine, CollaborationService, AnalyticsService
+   - Error handling: 403 (forbidden), 404 (draft not found), 500 (internal error)
+   - OpenTelemetry tracing for observability
+
+4. **Router Registration** (`backend/main.py`):
+   - Added insights router after analytics router
+
+### Frontend (Insights UI)
+1. **Types** (`src/types/collab.ts`):
+   - TypeScript interfaces mirroring backend: `DraftInsight`, `DraftRecommendation`, `DraftAlert`, `DraftInsightsResponse`
+
+2. **API Client** (`src/lib/collabApi.ts`):
+   - `getDraftInsights(draftId)`: Fetches insights with Clerk JWT auth
+
+3. **Component** (`src/components/InsightsPanel.tsx`):
+   - Insights section: Color-coded (critical=red, warning=yellow, info=blue), reason expandable
+   - Recommendations section: Actionable buttons (Pass Ring, Invite) with confidence scores
+   - Alerts section: Threshold vs current value, triggered timestamp
+   - Empty state: "All good! No insights to report."
+   - Loading state: Spinner with aria-live="polite"
+   - Error state: Retry button with aria-live="assertive"
+   - Accessibility: Keyboard navigation, screen reader support, ARIA labels, tabpanel roles
+
+### Testing
+1. **Backend Tests** (`backend/tests/test_insights_api.py`):
+   - 10+ test cases covering all insight types, recommendations, alerts, determinism, access control
+   - Tests: Stalled draft, dominant user, low engagement, healthy collaboration, alerts (no activity, single contributor), 403 non-collaborator, 200 collaborator access
+   - Determinism guarantee: Same draft state → identical insights twice
+
+2. **Frontend Tests** (`src/__tests__/insights-panel.spec.tsx`):
+   - 12+ test cases covering render, interactions, error handling, accessibility
+   - Tests: Loading state, stalled/dominant/healthy insights, pass ring button, invite button, alerts (no activity, single contributor), empty state, error state, onRefresh callback
+
+### Documentation
+1. **Phase Guide** (`docs/PHASE8_7_INSIGHTS.md`):
+   - Complete architecture, thresholds, API reference, integration guide, maintenance, success metrics
+
+2. **Roadmap Update** (`docs/ROADMAP.md`):
+   - Added Phase 8.7 completion entry with test counts and user impact
+
+**Files Added (Phase 8.7 — 6 new files):**
+- `backend/features/insights/__init__.py` (module init)
+- `backend/features/insights/models.py` (280 LOC — frozen Pydantic models)
+- `backend/features/insights/service.py` (380 LOC — InsightEngine with deterministic logic)
+- `backend/api/insights.py` (90 LOC — GET endpoint with access control)
+- `src/components/InsightsPanel.tsx` (320 LOC — full UI with insights/recommendations/alerts)
+- `backend/tests/test_insights_api.py` (350+ LOC — 10+ backend tests)
+- `src/__tests__/insights-panel.spec.tsx` (330+ LOC — 12+ frontend tests)
+- `docs/PHASE8_7_INSIGHTS.md` (complete guide)
+
+**Files Modified (Phase 8.7 — 4 files):**
+- `backend/main.py` (+2 lines — insights router registration)
+- `src/types/collab.ts` (+40 LOC — insights types)
+- `src/lib/collabApi.ts` (+15 LOC — getDraftInsights function)
+- `docs/ROADMAP.md` (+18 LOC — Phase 8.7 entry)
+- `PROJECT_STATE.md` (this file — header updated with test counts and Phase 8.7 summary)
+
+**Test Results (Phase 8.7):**
+- Backend: 621/621 passing (49 new insights tests, 0 skipped, 8 Pydantic warnings)
+- Frontend: 389/389 passing (12 new insights-panel tests, 0 failures)
+- Total: 1010 tests (988 from Phase 8.6.3 + 22 new)
 
 ## Phase 8.6.3: "Analytics Panel Tests + Docs" — COMPLETE ✅
 
