@@ -36,12 +36,17 @@ Short, actionable guidance for all AI agents (Grok, ChatGPT, Gemini, GitHub Copi
 - **Key services:** Groq (LLM), Stripe (payments), X/Twitter (posting), Clerk (auth), PostgreSQL + pgvector (data)
 - **Deployment:** Local dev (next dev + uvicorn), Docker/K8s ready in `infra/`
 
-## Hard Rules (Agent Safety)
+## Hard Rules (Agent Safety + Operational Discipline)
 - Never type markdown into a shell; the shell is for commands only.
 - Never use Set-Content with here-strings.
 - Never delete files unless explicitly instructed.
 - Never run full tests unless the user asks.
 - Never create more than one commit per task.
+- **CRITICAL (Phase 9.6):** Do NOT run `pnpm gate` unless explicitly asked or code changes require it. Default to `pnpm gate --mode docs` for docs-only work. Summary intended changes BEFORE executing.
+- Never invoke hooks multiple times per action. Hooks have built-in recursion guards (`ONERING_HOOK_RUNNING`); if you see them, don't work around them.
+- Hooks are DISABLED by default. Enable only with explicit user request: `ONERING_HOOKS=1 ONERING_GATE=fast|full|docs` for pre-commit, `ONERING_HOOKS=1 ONERING_GATE=full` for pre-push.
+- Never push or merge without explicit user request.
+- Never paste markdown or code into PowerShell; modify files via editor tools instead.
 
 ✅ **Update (Dec 2025):** Phase 3.4 analytics/leaderboard is complete. Backend analytics tests (49) and frontend tests (298) are passing. See `PROJECT_STATE.md` for canonical details.
 

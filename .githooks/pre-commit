@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Safety: hooks are opt-in. If ONERING_GATE is unset, skip. Set ONERING_HOOKS=0 to disable. No direct test commands here.
+# Safety: hooks are DISABLED by default. Require ONERING_HOOKS=1 AND ONERING_GATE to run.
+# Recursion guard: if ONERING_HOOK_RUNNING already set, skip to prevent loops.
 set -euo pipefail
+
+if [ "${ONERING_HOOK_RUNNING:-}" = "1" ]; then
+	echo "[pre-commit] Already running (recursion guard); skipping."
+	exit 0
+fi
+
+if [ "${ONERING_HOOKS:-}" != "1" ]; then
+	echo "[pre-commit] Hooks disabled by default. Enable with: ONERING_HOOKS=1 ONERING_GATE=fast|full|docs"
+	exit 0
+fi
+
+export ONERING_HOOK_RUNNING=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
-
-if [[ "${ONERING_HOOKS:-1}" == "0" ]]; then
-	echo "[pre-commit] Hooks disabled via ONERING_HOOKS=0; skipping."
-	exit 0
-fi
 
 MODE="${ONERING_GATE:-}"
 

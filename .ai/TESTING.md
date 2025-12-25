@@ -48,16 +48,34 @@ pnpm test -- --run -t "calls onRefresh after action"
 ## Gate Scripts
 
 ### Git Hooks (core.hooksPath = .githooks/)
-- `pre-commit`: runs `pnpm gate --mode fast` by default; respects `ONERING_GATE` (`docs` skips, `full` runs full gate).
-- `pre-push`: opt-in. Set `ONERING_GATE=full` to run the full gate before push; otherwise it is a no-op.
-- `commit-msg`: none (no tests).
-- Goal: no surprise full runs; you choose the mode via `ONERING_GATE` or `--mode`.
+
+**Hooks are DISABLED by default.** Require explicit opt-in to prevent unexpected test runs.
+
+**To enable hooks:**
+```powershell
+# Pre-commit hook
+ONERING_HOOKS=1 ONERING_GATE=fast git commit ...
+
+# Pre-push hook (full gate only)
+ONERING_HOOKS=1 ONERING_GATE=full git push ...
+```
+
+**Hook behaviors (when enabled):**
+- `pre-commit`: Runs gate in the mode specified by `ONERING_GATE` (fast, full, or docs)
+- `pre-push`: Runs full gate only if `ONERING_GATE=full`; otherwise skips
+- Recursion guard: If `ONERING_HOOK_RUNNING` env var is set, hook exits silently (prevents nested calls)
+
+**Modes:**
+- `docs` → skips all tests (safe for documentation work)
+- `fast` → changed-only tests (default for development)
+- `full` → all backend + frontend tests (required before final push)
 
 ### Everyday Loop & Commit Policy
-- Iterate with `pnpm gate -- --mode fast` (or `ONERING_GATE=fast`) while coding.
-- For doc-only updates, use `ONERING_GATE=docs` (skips tests) when invoking the gate or committing.
-- Before the final commit/push, run exactly one full gate: `pnpm gate -- --mode full`.
-- Keep commits atomic: one commit for the change-set (docs-only commit is fine when using `docs` mode).
+- Iterate with `pnpm gate --mode fast` while coding (direct invocation, no hooks)
+- For doc-only updates, use `pnpm gate --mode docs` (no tests needed)
+- Before the final commit/push, run exactly one full gate: `pnpm gate --mode full`
+- Keep commits atomic: one commit per task (docs-only commits are fine)
+- Never use `--no-verify` to bypass hooks
 
 ### `./scripts/gate.ps1` (PowerShell)
 
@@ -68,9 +86,9 @@ pnpm test -- --run -t "calls onRefresh after action"
 
 Examples:
 ```powershell
-pnpm gate -- --mode fast          # default
-pnpm gate -- --mode full          # run once before final commit/push
-ONERING_GATE=docs pnpm gate       # skip tests for doc-only updates
+pnpm gate --mode fast          # default (direct call)
+pnpm gate --mode full          # run once before final commit/push
+pnpm gate --mode docs          # skip tests for doc-only updates
 ```
 
 Behavior:

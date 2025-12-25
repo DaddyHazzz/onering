@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
-# Safety: hooks are opt-in; default skip. Full gate runs only when ONERING_GATE=full (or skip when ONERING_HOOKS=0).
+# Safety: hooks are DISABLED by default. Require ONERING_HOOKS=1 AND ONERING_GATE=full to run full gate.
+# Recursion guard: if ONERING_HOOK_RUNNING already set, skip to prevent loops.
 set -euo pipefail
+
+if [ "${ONERING_HOOK_RUNNING:-}" = "1" ]; then
+	echo "[pre-push] Already running (recursion guard); skipping."
+	exit 0
+fi
+
+if [ "${ONERING_HOOKS:-}" != "1" ]; then
+	echo "[pre-push] Hooks disabled by default. Enable with: ONERING_HOOKS=1 ONERING_GATE=full"
+	exit 0
+fi
+
+export ONERING_HOOK_RUNNING=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 MODE="${ONERING_GATE:-skip}"

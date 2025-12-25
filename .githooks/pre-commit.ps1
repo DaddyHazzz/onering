@@ -2,22 +2,30 @@ param(
     [string]$Mode
 )
 
-# Safety: hooks are opt-in. If ONERING_GATE is unset, skip. Set ONERING_HOOKS=0 to disable. No direct test commands here.
+# Safety: hooks are DISABLED by default. Require ONERING_HOOKS=1 AND ONERING_GATE to run.
+# Recursion guard: if ONERING_HOOK_RUNNING already set, skip to prevent loops.
+
+if ($env:ONERING_HOOK_RUNNING -eq "1") {
+    Write-Host "[pre-commit] Already running (recursion guard); skipping." -ForegroundColor Gray
+    exit 0
+}
+
+if ($env:ONERING_HOOKS -ne "1") {
+    Write-Host "[pre-commit] Hooks disabled by default. Enable with: ONERING_HOOKS=1 ONERING_GATE=fast|full|docs" -ForegroundColor Yellow
+    exit 0
+}
+
+$env:ONERING_HOOK_RUNNING = "1"
 
 $repoRoot = git rev-parse --show-toplevel
 Push-Location $repoRoot
-
-if ($env:ONERING_HOOKS -eq "0") {
-    Write-Host "[pre-commit] Hooks disabled via ONERING_HOOKS=0; skipping." -ForegroundColor Yellow
-    Pop-Location
-    exit 0
-}
 
 $resolvedMode = $Mode
 if (-not $resolvedMode -and $env:ONERING_GATE) { $resolvedMode = $env:ONERING_GATE }
 if (-not $resolvedMode) {
     Write-Host "[pre-commit] ONERING_GATE not set; skipping tests." -ForegroundColor Yellow
     Pop-Location
+    $env:ONERING_HOOK_RUNNING = ""
     exit 0
 }
 $resolvedMode = $resolvedMode.ToLower()
@@ -51,4 +59,5 @@ if ($status -eq 0) {
 }
 
 Pop-Location
+$env:ONERING_HOOK_RUNNING = ""
 exit $status

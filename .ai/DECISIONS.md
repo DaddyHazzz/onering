@@ -348,6 +348,44 @@ backend/
 
 ---
 
+## 12. Agent Operational Safety & Hooks Policy
+
+**Decision:** Hooks are DISABLED by default. Tests run only when explicitly enabled via environment variables.
+
+**Why Disabled by Default?**
+- ✅ Prevents accidental multi-commit loops or double test runs
+- ✅ Ensures AI agents can't drift into testing workflows unintentionally
+- ✅ Provides explicit, user-controllable opt-in for safety
+- ✅ Recursion guard prevents nested hook invocations
+
+**Hook Activation:**
+- **Pre-commit:** `ONERING_HOOKS=1 ONERING_GATE=fast|full|docs git commit ...`
+- **Pre-push:** `ONERING_HOOKS=1 ONERING_GATE=full git push ...`
+
+**Direct Gate Invocation:**
+- Docs only: `pnpm gate --mode docs` (no tests, safe for documentation work)
+- Changed files: `pnpm gate --mode fast` (dev mode)
+- Full suite: `pnpm gate --mode full` (pre-push validation)
+
+**Recursion Guard:**
+- Env var `ONERING_HOOK_RUNNING` prevents nested hook calls
+- If already set to `1`, hook exits silently
+- Automatically cleared after hook completes
+
+**AI Agent Contract:**
+- Never run `pnpm gate` unless explicitly asked or code changes require it
+- Default to `pnpm gate --mode docs` for docs-only work
+- Summarize intended changes BEFORE making them
+- Never create more than one commit per task
+- Never push/merge without explicit user request
+
+**See:**
+- [.githooks/pre-commit](../.githooks/pre-commit) & [.githooks/pre-commit.ps1](../.githooks/pre-commit.ps1)
+- [.githooks/pre-push](../.githooks/pre-push) & [.githooks/pre-push.ps1](../.githooks/pre-push.ps1)
+- [.github/copilot-instructions.md](../.github/copilot-instructions.md) — Agent safety rules
+
+---
+
 ## When to Revisit These Decisions
 
 **Revisit if:**
