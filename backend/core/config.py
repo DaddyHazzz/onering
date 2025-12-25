@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     ONERING_AUDIT_LOG: str = "1"  # "0" | "1"
     ONERING_TOKEN_ISSUANCE: str = "off"  # off | shadow | live
     ONERING_ENFORCEMENT_RECEIPT_TTL_SECONDS: int = 3600
+    ONERING_AUDIT_RETENTION_DAYS: int = 30
+    ONERING_AUDIT_CLEANUP_DRY_RUN: str = "1"
 
     # Admin access (Phase 4.6: hybrid auth)
     ADMIN_KEY: Optional[str] = None  # Legacy key (backward compatible)

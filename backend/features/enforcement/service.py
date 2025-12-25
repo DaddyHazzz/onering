@@ -347,7 +347,11 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         model_version="10.1",
         prompt=request.prompt,
         input_payload={"draft": draft.model_dump(mode="json"), "evidence": evidence.model_dump(mode="json")},
-        output_payload={"qa": qa.model_dump(mode="json"), "receipt": receipt.model_dump(mode="json")},
+        output_payload={
+            "qa": qa.model_dump(mode="json"),
+            "receipt": receipt.model_dump(mode="json"),
+            "mode": mode,
+        },
         request=request,
         started_at=started,
         finished_at=finished,
@@ -355,7 +359,11 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
     audit_records.append(
         _decision_record(
             qa_meta,
-            {"qa": qa.model_dump(mode="json"), "receipt": receipt.model_dump(mode="json")},
+            {
+                "qa": qa.model_dump(mode="json"),
+                "receipt": receipt.model_dump(mode="json"),
+                "mode": mode,
+            },
             "PASS" if qa.status == "PASS" else "FAIL",
         )
     )
@@ -417,7 +425,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
     decisions.append(
         EnforcementDecisionSummary(
             agent_name="Analytics",
-            status="pass",
+            status="PASS",
             violation_codes=[],
             required_edits=[],
             decision_id=analytics_meta.output_hash,

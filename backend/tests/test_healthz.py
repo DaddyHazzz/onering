@@ -43,6 +43,7 @@ def test_readyz_ok_with_mocked_db(monkeypatch):
         "draft_collaborators",
         "ring_passes",
         "audit_events",
+        "audit_agent_decisions",
     ]))
 
     resp = client.get("/readyz")
@@ -61,3 +62,35 @@ def test_readyz_handles_db_down(monkeypatch):
     assert resp.status_code == 503
     assert body.get("status") == "error"
     assert "database" in body.get("detail", "")
+
+
+def test_readyz_requires_audit_logging(monkeypatch):
+    import backend.core.config as config
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def exec_driver_sql(self, query):
+            return None
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConn()
+
+    class FakeInspector:
+        def has_table(self, name):
+            return True
+
+    monkeypatch.setattr(health_api, "get_engine", lambda: FakeEngine())
+    monkeypatch.setattr(health_api, "inspect", lambda engine: FakeInspector())
+    monkeypatch.setattr(config.settings, "ONERING_ENFORCEMENT_MODE", "enforced")
+    monkeypatch.setattr(config.settings, "ONERING_AUDIT_LOG", "0")
+
+    resp = client.get("/readyz")
+    body = resp.json()
+    assert resp.status_code == 503
+    assert "audit logging" in body.get("detail", "")

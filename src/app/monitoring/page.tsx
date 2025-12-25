@@ -21,11 +21,43 @@ interface AgentTrace {
   duration?: number;
 }
 
+interface EnforcementRecord {
+  request_id?: string | null;
+  receipt_id?: string | null;
+  mode?: string | null;
+  qa_status?: string | null;
+  audit_ok?: boolean;
+  violation_codes_count?: number;
+  created_at?: string | null;
+  expires_at?: string | null;
+  latency_ms?: number | null;
+  last_error_code?: string | null;
+  last_error_at?: string | null;
+}
+
+interface EnforcementMetrics {
+  window_hours: number;
+  metrics: {
+    qa_blocked: number;
+    enforcement_receipt_required: number;
+    enforcement_receipt_expired: number;
+    audit_write_failed: number;
+    policy_error: number;
+    p90_latency_ms?: number | null;
+  };
+}
+
 export default function MonitoringPage() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [traces, setTraces] = useState<AgentTrace[]>([]);
+  const [enforcementRecords, setEnforcementRecords] = useState<EnforcementRecord[]>([]);
+  const [enforcementMetrics, setEnforcementMetrics] = useState<EnforcementMetrics | null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [modeFilter, setModeFilter] = useState("all");
+  const [auditOnly, setAuditOnly] = useState(false);
+  const [searchRequestId, setSearchRequestId] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,7 +66,11 @@ export default function MonitoringPage() {
       // For now, allow any authenticated user to view monitoring
       // In production: const isAdmin = user.publicMetadata?.role === 'admin'
       fetchStats();
-      const interval = setInterval(fetchStats, 5000); // Refresh every 5s
+      fetchEnforcement();
+      const interval = setInterval(() => {
+        fetchStats();
+        fetchEnforcement();
+      }, 10000); // Refresh every 10s
       return () => clearInterval(interval);
     } else if (isLoaded && !user) {
       router.push("/");
@@ -53,6 +89,41 @@ export default function MonitoringPage() {
     }
     setLoading(false);
   };
+
+  const fetchEnforcement = async () => {
+    try {
+      const [recentRes, metricsRes] = await Promise.all([
+        fetch("/api/monitoring/enforcement/recent?limit=100"),
+        fetch("/api/monitoring/enforcement/metrics"),
+      ]);
+      const recentData = await recentRes.json();
+      const metricsData = await metricsRes.json();
+      if (recentRes.ok) {
+        setEnforcementRecords(recentData.items || []);
+      }
+      if (metricsRes.ok) {
+        setEnforcementMetrics(metricsData);
+      }
+    } catch (error) {
+      console.error("[monitoring] enforcement fetch error:", error);
+    }
+  };
+
+  const filteredRecords = enforcementRecords.filter((record) => {
+    if (statusFilter !== "all" && record.qa_status?.toLowerCase() !== statusFilter) {
+      return false;
+    }
+    if (modeFilter !== "all" && record.mode?.toLowerCase() !== modeFilter) {
+      return false;
+    }
+    if (auditOnly && record.audit_ok !== false) {
+      return false;
+    }
+    if (searchRequestId && !record.request_id?.includes(searchRequestId)) {
+      return false;
+    }
+    return true;
+  });
 
   if (!isLoaded || loading) {
     return (
@@ -171,9 +242,154 @@ export default function MonitoringPage() {
           )}
         </div>
 
+        {/* Enforcement Monitoring */}
+        <div className="mt-12 bg-white/10 backdrop-blur-xl rounded-3xl p-10 shadow-2xl border border-white/20">
+          <h2 className="text-3xl font-bold mb-6">Enforcement Monitoring</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">QA_BLOCKED (24h)</div>
+              <div className="text-2xl font-bold">{enforcementMetrics?.metrics.qa_blocked ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">RECEIPT_REQUIRED (24h)</div>
+              <div className="text-2xl font-bold">{enforcementMetrics?.metrics.enforcement_receipt_required ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">RECEIPT_EXPIRED (24h)</div>
+              <div className="text-2xl font-bold">{enforcementMetrics?.metrics.enforcement_receipt_expired ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">AUDIT_WRITE_FAILED (24h)</div>
+              <div className="text-2xl font-bold">{enforcementMetrics?.metrics.audit_write_failed ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">POLICY_ERROR (24h)</div>
+              <div className="text-2xl font-bold">{enforcementMetrics?.metrics.policy_error ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">p90 Latency</div>
+              <div className="text-2xl font-bold">
+                {enforcementMetrics?.metrics.p90_latency_ms ?? "N/A"}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-4 mb-6">
+            <select
+              data-testid="filter-status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm"
+            >
+              <option value="all">All status</option>
+              <option value="pass">PASS</option>
+              <option value="fail">FAIL</option>
+            </select>
+            <select
+              data-testid="filter-mode"
+              value={modeFilter}
+              onChange={(e) => setModeFilter(e.target.value)}
+              className="rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm"
+            >
+              <option value="all">All modes</option>
+              <option value="advisory">ADVISORY</option>
+              <option value="enforced">ENFORCED</option>
+            </select>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={auditOnly}
+                onChange={(e) => setAuditOnly(e.target.checked)}
+              />
+              Audit failures only
+            </label>
+            <input
+              data-testid="search-request-id"
+              value={searchRequestId}
+              onChange={(e) => setSearchRequestId(e.target.value)}
+              placeholder="Search request_id"
+              className="rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-sm flex-1 min-w-[220px]"
+            />
+          </div>
+
+          {filteredRecords.length === 0 ? (
+            <div className="text-gray-400 text-sm py-6">No enforcement records.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-gray-400">
+                  <tr>
+                    <th className="py-2">Timestamp</th>
+                    <th className="py-2">Expires</th>
+                    <th className="py-2">Mode</th>
+                    <th className="py-2">QA</th>
+                    <th className="py-2">Request</th>
+                    <th className="py-2">Receipt</th>
+                    <th className="py-2">Audit OK</th>
+                    <th className="py-2">Violations</th>
+                    <th className="py-2">Error</th>
+                    <th className="py-2">Error At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRecords.map((record, idx) => (
+                    <tr key={`${record.request_id || "req"}-${idx}`} className="border-t border-white/10">
+                      <td className="py-2 text-xs text-gray-300">
+                        {record.created_at ? new Date(record.created_at).toLocaleString() : "n/a"}
+                      </td>
+                      <td className="py-2 text-xs text-gray-300">
+                        {record.expires_at ? new Date(record.expires_at).toLocaleString() : "n/a"}
+                      </td>
+                      <td className="py-2">{record.mode?.toUpperCase() || "N/A"}</td>
+                      <td className={`py-2 ${record.qa_status === "FAIL" ? "text-red-300" : "text-green-300"}`}>
+                        {record.qa_status || "N/A"}
+                      </td>
+                      <td className="py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{record.request_id || "n/a"}</span>
+                          <button
+                            type="button"
+                            data-testid="copy-request-id"
+                            onClick={() => navigator.clipboard.writeText(record.request_id || "")}
+                            className="rounded bg-white/10 px-2 py-0.5 text-xs"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{record.receipt_id || "n/a"}</span>
+                          <button
+                            type="button"
+                            data-testid="copy-receipt-id"
+                            onClick={() => navigator.clipboard.writeText(record.receipt_id || "")}
+                            className="rounded bg-white/10 px-2 py-0.5 text-xs"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-2">{record.audit_ok ? "YES" : "NO"}</td>
+                      <td className="py-2">{record.violation_codes_count ?? 0}</td>
+                      <td className="py-2 text-xs text-red-200">
+                        {record.last_error_code || "n/a"}
+                      </td>
+                      <td className="py-2 text-xs text-red-200">
+                        {record.last_error_at ? new Date(record.last_error_at).toLocaleString() : "n/a"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* Footer */}
         <div className="mt-12 text-center text-gray-500 text-sm">
-          <p>Dashboard auto-refreshes every 5 seconds</p>
+          <p>Dashboard auto-refreshes every 10 seconds</p>
           <p>Last updated: {new Date().toLocaleTimeString()}</p>
         </div>
       </div>

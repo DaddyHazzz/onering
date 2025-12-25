@@ -27,6 +27,11 @@ describe("enforcement utils", () => {
     expect(normalized?.qa_summary.required_edits).toEqual([]);
   });
 
+  it("returns null when payload missing mode", () => {
+    const normalized = normalizeEnforcementPayload({ qa_summary: { status: "PASS" } });
+    expect(normalized).toBeNull();
+  });
+
   it("builds enforcement request fields from receipt or request id", () => {
     const fields = buildEnforcementRequestFields({
       request_id: "req-3",

@@ -167,6 +167,8 @@ export async function POST(req: NextRequest) {
             const suggestedFix =
               receiptCheck.code === "AUDIT_WRITE_FAILED"
                 ? "Ensure audit tables are created before enabling enforced mode."
+                : receiptCheck.code === "ENFORCEMENT_RECEIPT_EXPIRED"
+                ? "Receipt expired. Regenerate content and try posting again."
                 : "Regenerate content with enforcement enabled and pass a valid enforcement_request_id.";
             return failure("Enforcement receipt invalid", 403, {
               code: receiptCheck.code,
@@ -223,7 +225,7 @@ export async function POST(req: NextRequest) {
     try {
       console.log("[post-to-x] validating Twitter credentials...");
       await client.v2.me();
-      console.log("[post-to-x] credentials validated ✓");
+      console.log("[post-to-x] credentials validated");
     } catch (authErr: any) {
       console.error("[post-to-x] credential validation failed:", {
         status: authErr.status,

@@ -266,6 +266,14 @@ Make OneRing defensible by enforcing agent workflows, activating minimal token e
 
 ---
 
+### Phase 10.1 Enforced Readiness
+- References: [PHASE_10_1_POST_IMPLEMENTATION_AUDIT.md](PHASE_10_1_POST_IMPLEMENTATION_AUDIT.md), [PHASE_10_1_ENFORCED_READINESS_CHECKLIST.md](PHASE_10_1_ENFORCED_READINESS_CHECKLIST.md), [PHASE_10_1_EXECUTION_BACKLOG.md](PHASE_10_1_EXECUTION_BACKLOG.md)
+- Status: Enforcement scaffold present behind `ONERING_ENFORCEMENT_MODE`/`ONERING_AUDIT_LOG`/`ONERING_TOKEN_ISSUANCE`; readiness tasks tracked in backlog slices.
+- Current blockers: enforced rollout verification (metrics thresholds, ops runbook), cleanup dry-run validation.
+- Observability + enforcement monitoring endpoints shipped; audit retention cleanup job added (dry-run default).
+
+---
+
 ### Phase 10 Strategic Risks (Explicit)
 
 **Agent-First Risks:**

@@ -107,6 +107,7 @@ Invariants:
 **Client Responsibilities (Phase 10.1):**
 - If `enforcement.mode` is not `off`, persist `enforcement.request_id` and `enforcement.receipt.receipt_id`.
 - When posting, include `enforcement_request_id` and/or `enforcement_receipt_id` in the request body.
+- Receipts expire after `ONERING_ENFORCEMENT_RECEIPT_TTL_SECONDS` (default 3600s); regenerate on expiry.
 
 ### Enforcement Metadata (Phase 10.1)
 
@@ -247,6 +248,21 @@ Notes:
     - `ENFORCEMENT_RECEIPT_INVALID`
     - `ENFORCEMENT_RECEIPT_EXPIRED`
     - `AUDIT_WRITE_FAILED`
+
+## Monitoring (internal)
+
+- GET /v1/monitoring/enforcement/recent
+  - Query: `limit` (default 50, max 200), `since` (ISO8601)
+  - Returns: { items: [{ request_id, receipt_id, mode, qa_status, violation_codes_count, audit_ok, created_at, expires_at, latency_ms, last_error_code, last_error_at }] }
+- GET /v1/monitoring/enforcement/metrics
+  - Returns: { window_hours: 24, metrics: { qa_blocked, enforcement_receipt_required, enforcement_receipt_expired, audit_write_failed, policy_error, p90_latency_ms } }
+
+## Audit Retention (ops)
+
+- Env vars:
+  - `ONERING_AUDIT_RETENTION_DAYS` (default 30)
+  - `ONERING_AUDIT_CLEANUP_DRY_RUN` (default "1")
+- Cleanup job: `python -m backend.workers.cleanup_enforcement`
 
 Notes:
 - All time-based endpoints accept optional `now` for deterministic tests.

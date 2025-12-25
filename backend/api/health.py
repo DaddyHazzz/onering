@@ -54,6 +54,7 @@ def readyz():
         "draft_collaborators",
         "ring_passes",
         "audit_events",
+        "audit_agent_decisions",
     ]
 
     try:
@@ -67,6 +68,13 @@ def readyz():
         missing = [t for t in required_tables if not inspector.has_table(t)]
         if missing:
             detail = f"missing tables: {', '.join(missing)}"
+            logger.warning(f"[readyz] {detail}")
+            return JSONResponse(status_code=503, content={"status": "error", "detail": detail})
+
+        # Config sanity checks for enforced mode
+        from backend.core.config import settings
+        if settings.ONERING_ENFORCEMENT_MODE == "enforced" and str(settings.ONERING_AUDIT_LOG) != "1":
+            detail = "audit logging must be enabled for enforced mode"
             logger.warning(f"[readyz] {detail}")
             return JSONResponse(status_code=503, content={"status": "error", "detail": detail})
 

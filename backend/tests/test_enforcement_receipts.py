@@ -65,6 +65,7 @@ async def test_validate_receipt_expired(client, monkeypatch):
     data = res.json()
     assert data["ok"] is False
     assert data["code"] == "ENFORCEMENT_RECEIPT_EXPIRED"
+    assert "suggestedFix" in data
 
 
 @pytest.mark.asyncio
