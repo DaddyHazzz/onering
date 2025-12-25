@@ -1,5 +1,5 @@
 /**
- * Phase 8.7: Insights Panel
+ * Phase 8.9: Insights Panel (Production-Ready)
  * 
  * Displays actionable insights, recommendations, and alerts for a draft.
  * Replaces "holy shit this is cool" with "holy shit this thing actually helps me write better."
@@ -9,8 +9,9 @@
  * - Actionable recommendations with one-click buttons (pass ring, invite user)
  * - Alerts (no activity, long hold, single contributor)
  * - Accessible keyboard navigation and screen reader support
+ * - Toast-based feedback (no window.alert)
  * 
- * Phase 8.7.1: Integrated into draft page with real action callbacks.
+ * Phase 8.9: Removed window.alert() in favor of Toast notifications.
  */
 
 "use client";
@@ -18,6 +19,7 @@
 import { useState, useEffect } from "react";
 import { DraftInsightsResponse, DraftInsight, DraftRecommendation, DraftAlert, SmartPassStrategy } from "@/types/collab";
 import { getDraftInsights } from "@/lib/collabApi";
+import { useToast, ToastContainer } from "@/components/Toast";
 
 interface InsightsPanelProps {
   draftId: string;
@@ -31,6 +33,7 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const { toasts, addToast, removeToast } = useToast();
 
   const loadInsights = async () => {
     setLoading(true);
@@ -51,7 +54,7 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
 
   const handlePassRing = async (targetUserId: string) => {
     if (!onSmartPass) {
-      alert("Smart pass not available");
+      addToast("Smart pass not available", "warning");
       return;
     }
     
@@ -60,9 +63,9 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
       const result = await onSmartPass("most_inactive");
       await loadInsights();
       onRefresh?.();
-      alert(`Ring passed to ${result.to_user_id}: ${result.reason}`);
+      addToast(`Ring passed to ${result.to_user_id}`, "success");
     } catch (err: any) {
-      alert(err.message || "Failed to pass ring");
+      addToast(err.message || "Failed to pass ring", "error");
     } finally {
       setActionLoading(null);
     }
@@ -70,7 +73,7 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
 
   const handleInviteUser = async () => {
     if (!onInvite) {
-      alert("Invite not available");
+      addToast("Invite not available yet", "info");
       return;
     }
     
@@ -82,9 +85,9 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
       await onInvite(collaboratorId);
       await loadInsights();
       onRefresh?.();
-      alert(`Invited ${collaboratorId} successfully`);
+      addToast(`Invited ${collaboratorId} successfully`, "success");
     } catch (err: any) {
-      alert(err.message || "Failed to invite user");
+      addToast(err.message || "Failed to invite user", "error");
     } finally {
       setActionLoading(null);
     }
@@ -142,7 +145,8 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <>
+      <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Draft Insights</h2>
@@ -279,7 +283,11 @@ export default function InsightsPanel({ draftId, onRefresh, onSmartPass, onInvit
       <div className="text-xs text-gray-500 text-center border-t pt-4">
         Last updated: {new Date(insights.computed_at).toLocaleString()}
       </div>
-    </div>
+      </div>
+      
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+    </>
   );
 }
 

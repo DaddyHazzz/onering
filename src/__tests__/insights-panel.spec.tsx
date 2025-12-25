@@ -301,6 +301,57 @@ describe("InsightsPanel", () => {
     expect(retryButton).toBeInTheDocument();
   });
 
+  it("uses Toast notifications instead of window.alert", async () => {
+    const mockInsights = {
+      draft_id: mockDraftId,
+      insights: [],
+      recommendations: [
+        {
+          action: "pass_ring",
+          target_user_id: "user2",
+          reason: "Pass ring to most inactive user",
+          confidence: 0.85
+        }
+      ],
+      alerts: [],
+      computed_at: new Date().toISOString()
+    };
+
+    vi.mocked(collabApi.getDraftInsights).mockResolvedValue(mockInsights);
+    
+    const onSmartPass = vi.fn().mockResolvedValue({ 
+      to_user_id: "user2", 
+      reason: "Most inactive" 
+    });
+    
+    // Spy on window.alert to ensure it's NOT called
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    render(
+      <InsightsPanel 
+        draftId={mockDraftId} 
+        onSmartPass={onSmartPass}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Pass the Ring")).toBeInTheDocument();
+    });
+
+    const passButton = screen.getByRole("button", { name: /pass ring/i });
+    fireEvent.click(passButton);
+
+    // Wait for action to complete
+    await waitFor(() => {
+      expect(onSmartPass).toHaveBeenCalled();
+    });
+
+    // Verify window.alert was NEVER called
+    expect(alertSpy).not.toHaveBeenCalled();
+    
+    alertSpy.mockRestore();
+  });
+
   it("calls onRefresh after action", async () => {
     const mockInsights = {
       draft_id: mockDraftId,

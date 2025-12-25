@@ -45,19 +45,50 @@ Last Updated: December 25, 2025
 
 - GET /api/insights/drafts/{draft_id}
   - Draft insights, recommendations, alerts
-  - Query: optional now
-  - Returns: {
-      draft_id,
-      insights: [{ type, severity, title, message, reason }],
-      recommendations: [{ action, target_user_id?, reason, confidence }],
-      alerts: [{ alert_type, triggered_at, threshold, current_value, reason }],
-      computed_at
+  - Auth: Collaborators only (creator + invited collaborators)
+  - Query: optional `now` (ISO8601) for deterministic tests
+  - Returns:
+    ```json
+    {
+      "draft_id": "draft-123",
+      "insights": [
+        {
+          "type": "stalled|dominant_user|low_engagement|healthy",
+          "severity": "critical|warning|info",
+          "title": "string",
+          "message": "string",
+          "reason": "string (for explainability)",
+          "metrics_snapshot": { /* context-specific metrics */ }
+        }
+      ],
+      "recommendations": [
+        {
+          "action": "pass_ring|invite_user|add_segment|review_suggestions",
+          "target_user_id": "string (optional)",
+          "reason": "string",
+          "confidence": 0.0-1.0
+        }
+      ],
+      "alerts": [
+        {
+          "alert_type": "no_activity|long_ring_hold|single_contributor",
+          "triggered_at": "ISO8601",
+          "threshold": "string (e.g. '72h+ no activity')",
+          "current_value": "number|string",
+          "reason": "string (why alert triggered)"
+        }
+      ],
+      "computed_at": "ISO8601"
     }
+    ```
 
 Invariants:
-- Alerts computed from current state (no averages) for determinism.
-- LONG_RING_HOLD: triggered when (now - ring_state.passed_at) >= 24h.
-- NO_ACTIVITY: triggered when (now - last_activity_ts) >= 72h.
+- All insights computed deterministically from draft state
+- Alerts based on current state (no averages), works with zero ring passes
+- LONG_RING_HOLD: uses `ring_state.passed_at` for current holder duration
+- NO_ACTIVITY: threshold 72h since last activity
+- SINGLE_CONTRIBUTOR: <2 contributors with 5+ segments
+- Access: 403 if not collaborator
 
 ## Generation
 
