@@ -387,6 +387,29 @@ audit_events = Table(
     Column('user_agent', Text, nullable=True),
 )
 
+# Agent decision audit log (Phase 10.1)
+audit_agent_decisions = Table(
+    'audit_agent_decisions',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('request_id', String(100), nullable=True, index=True),
+    Column('draft_id', String(100), nullable=True, index=True),
+    Column('ring_id', String(100), nullable=True, index=True),
+    Column('turn_id', String(100), nullable=True, index=True),
+    Column('user_id', String(100), nullable=True, index=True),
+    Column('agent_name', String(100), nullable=False, index=True),
+    Column('agent_version', String(50), nullable=False),
+    Column('contract_version', String(50), nullable=False),
+    Column('policy_version', String(50), nullable=False),
+    Column('input_hash', String(64), nullable=False),
+    Column('output_hash', String(64), nullable=False),
+    Column('prompt_hash', String(64), nullable=False),
+    Column('decision_json', JSON, nullable=False),
+    Column('status', String(20), nullable=False, index=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False, index=True),
+    Index('idx_audit_agent_decisions_agent', 'agent_name', 'created_at'),
+)
+
 # Wait mode tables (Phase 8.4 - Waiting for the Ring)
 wait_notes = Table(
     'wait_notes',

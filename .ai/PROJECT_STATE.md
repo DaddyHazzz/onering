@@ -1,7 +1,7 @@
 # Project State (Canonical)
 
-**Last Updated:** December 25, 2025 @ 11:48 UTC  
-**Status:** Phase 8.9 COMPLETE. All tests passing (618 backend + 395 frontend = 1013 total).
+**Last Updated:** December 25, 2025 @ 15:30 UTC  
+**Status:** Phase 9.6 COMPLETE. **Phase 10 PLANNING COMPLETE** (execution approval pending). All tests passing (618 backend + 395 frontend = 1013 total).
 
 ## Test Coverage
 
@@ -17,6 +17,37 @@
 **Duration:** ~2.5 minutes (sequential: backend ~2m 53s + frontend ~7s)
 
 ## Current Phase Status
+
+### ✅ Phase 9.6: Governance, Hooks, Safety Contracts
+**Shipped:** December 25, 2025  
+**Commit:** Not yet committed (documentation phase)
+
+**Parts Completed:**
+
+**Part A: Git Hooks with Opt-In Safety**
+- Created `.git/hooks/pre-commit` and `.git/hooks/pre-push` with recursive guards
+- Hooks are **disabled by default** (require `ONERING_HOOKS=1` environment variable)
+- Default gate mode: `docs` (fast, non-blocking for documentation-only changes)
+- Gate modes: `fast` (changed-only tests), `full` (all 1013 tests), `docs` (docs-only validation)
+- Zero false positives from hook recursion (guarded via `ONERING_HOOK_RUNNING` flag)
+
+**Part B: Documentation Standards**
+- All canonical docs consolidated under `.ai/` directory
+- Handoff Pack created at `.ai/HANDOFF_PACK/` (20 numbered files for new sessions)
+- Versioned decision records (DECISIONS.md, TESTING.md, API_REFERENCE.md)
+- Explicit non-goals documented (no blockchain, no multi-LLM, no self-hosting)
+
+**Part C: Safety Contracts**
+- GREEN ALWAYS policy: zero skipped tests, no `--no-verify` bypasses
+- One commit per task maximum (prevents drift and merge conflicts)
+- No code changes without explicit user request (agents must ask first)
+- Docs-only changes use `pnpm gate --mode docs` (fast validation)
+
+**Impact:**
+- Repository governance locked (clear rules for all contributors)
+- Hooks prevent accidental broken commits (but are opt-in, not blocking)
+- Documentation always reflects actual system state
+- Phase 10 can proceed with stable foundation
 
 ### ✅ Phase 8.9: Insights UI + Toast Notifications + Summary Cards
 **Shipped:** December 25, 2025  
@@ -189,16 +220,105 @@
 
 ## Next Steps
 
+### Phase 10 (PLANNING COMPLETE — Ready for Execution Approval)
+
+**⚠️ CRITICAL:** See [.ai/PHASE_10_MASTER_PLAN.md](.ai/PHASE_10_MASTER_PLAN.md) for comprehensive execution plan.
+
+**Phase 10 Objective (One Sentence):**
+Make OneRing defensible by enforcing agent workflows, activating minimal token economics with audit trails, and exposing controlled external APIs—without blockchain, speculation, or architectural drift.
+
+---
+
+### Phase 10.1 — Execution Approved Pending
+
+- Status: Enforcement scaffolding in progress (feature-flagged, default off).
+- Flags: `ONERING_ENFORCEMENT_MODE`, `ONERING_AUDIT_LOG`, `ONERING_TOKEN_ISSUANCE` (shadow only).
+- Preflight Checklist:
+  - Review [PHASE_10_1_EXECUTION_BACKLOG.md](PHASE_10_1_EXECUTION_BACKLOG.md) and confirm one-commit slices.
+  - Review and accept [PHASE_10_DECISION_LOG.md](PHASE_10_DECISION_LOG.md) (Q1–Q4 locked: SLA, circuit breaker, telemetry retention, observability UX).
+  - Confirm feature flag policy and rollout constraints in [DECISIONS.md](DECISIONS.md#phase-101--agent-enforcement-decisions-append-only).
+  - Confirm API docs updated with Enforcement Metadata and error shapes (advisory mode first).
+  - Verify kill-switch procedure documented (OFF revert) and `/monitoring` readiness.
+
+**Sub-Phases:**
+
+**Phase 10.1 — Agent-First Productization (3-4 weeks)**
+
+
+**Phase 10.2 — Token Loop Activation (2-3 weeks)**
+- **Objective:** Activate $RING economy with enforcement and audit trails
+- **Key Changes:** RING deductions (-10 for failed posts), 1% monthly decay (>10K holdings), 1M lifetime cap, audit trail (PostgreSQL)
+- **Success Criteria:** Audit reconciliation passes, <1% gaming attempts, sybil detection logging warnings
+- **Entry Criteria:** 10.1 complete, agent telemetry logging RING awards
+
+- **Exit Criteria:** 720+ backend tests passing, daily audit job operational
+
+**Phase 10.3 — Platform / External Surface Area (4-5 weeks)**
+- **Objective:** Expose controlled external APIs with security guarantees
+- **Key Changes:** `/api/v1/external/*` (read-only), webhooks (HMAC-SHA256 signing), plugin sandbox, kill-switch
+- **Success Criteria:** 3 external integrations built, webhook delivery >95%, zero security incidents (90 days)
+- **Entry Criteria:** 10.2 complete, token loop stable, OAuth2 scopes defined
+- **Exit Criteria:** 780+ backend tests passing, external API documented
+
+**Total Phase 10 Duration:** 9-12 weeks (Q1 2026 estimate)
+
+**Critical Path:** 9.6 (complete) → 10.1 (agents) → 10.2 (tokens) → 10.3 (APIs)
+
+---
+
+### Phase 10 Strategic Risks (Explicit)
+
+**Agent-First Risks:**
+- **Agent complexity increases debugging difficulty** — Mitigation: Comprehensive telemetry (workflow IDs, timing, failures logged)
+- **Forced agent usage may slow experienced users** — Mitigation: Target p90 latency <2 seconds, circuit breakers for failures
+- **Agent failures become blocking** — Mitigation: Circuit breakers return degraded content (no permanent blocks)
+
+**Token Loop Risks:**
+- **Gaming/exploitation attempts** — Mitigation: Rate limits (5/10/15 posts per 15min), sybil detection, Stripe verification gates
+- **User confusion about RING value** — Mitigation: Clear disclaimers, TOS updates ("RING is not a cryptocurrency")
+- **Regulatory scrutiny if RING perceived as security** — Mitigation: Explicit non-currency status, no USD conversion
+- **RING inflation if award formula too generous** — Mitigation: 1M lifetime cap, 1% monthly decay (>10K holdings)
+
+**External API Risks:**
+- **API abuse or DDoS attacks** — Mitigation: Rate limits (100/hour free, 1000/hour paid), OAuth2 scoping, kill-switch
+- **Third-party plugin security vulnerabilities** — Mitigation: Sandboxed execution (isolated FastAPI workers), manual approval queue
+- **Scope creep into full platform features** — Mitigation: Strict non-goals list, timeline boundaries enforced
+- **Maintenance burden of versioned APIs** — Mitigation: Limit API surface area, support v1 for 12 months post-v2
+
+---
+
+### Stable & Protected Architecture (No Changes in Phase 10)
+
+| Component | Current Choice | Phase 10 Status | Rationale |
+|-----------|---------------|----------------|-----------|
+| **Auth** | Clerk | ✅ Protected | Best Next.js integration, metadata storage for RING |
+| **LLM** | Groq (llama-3.1-8b-instant) | ✅ Protected | 10-20x faster, lower cost, prompts tuned for this model |
+| **Backend** | FastAPI + LangGraph | ✅ Protected | Async support, Pydantic validation, simple agent chains |
+| **Database** | PostgreSQL + pgvector | ✅ Protected | ACID transactions, pgvector for embeddings, open source |
+| **Queues** | Redis + RQ | ✅ Protected | Simple Python interface, no message broker overhead |
+| **Frontend** | Next.js 16 (App Router) | ✅ Protected | TypeScript, Clerk integration, streaming support |
+| **Testing** | Vitest + Pytest | ✅ Protected | ESM-native, fast, all tests green always |
+| **Deployment** | Docker + K8s ready | ✅ Protected | Local dev works, cloud-ready manifests exist |
+
+**GREEN ALWAYS Policy:** Maintained throughout Phase 10. All sub-phases gate on tests passing (zero skipped, no `--no-verify` bypasses).
+
+---
+
+## Previous Phase: Phase 8.9 (Completed)
+
 1. **Phase 8.9 (COMPLETE):**
    - Production-ready Insights UI ✅
    - Toast notifications + summary cards ✅
    - Commit + push ✅
 
-2. **Phase 9 (PLANNED):**
-   - ML-based recommendations
-   - Cohort analysis
-   - Predictive alerts
-   - User preferences
+2. **Phase 9.6 (COMPLETE):**
+   - Governance, hooks, safety contracts ✅
+   - Documentation standards locked ✅
+   - Handoff Pack created ✅
+
+3. **Phase 10 (PLANNED):**
+   - See detailed breakdown above
+   - Execution pending stakeholder approval
 
 ---
 

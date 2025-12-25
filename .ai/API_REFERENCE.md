@@ -99,6 +99,55 @@ Invariants:
   - Streams Groq tokens (SSE) for content generation
   - Body: { prompt: string, userId: string }
   - Returns: SSE stream of tokens
+  - Optional (Phase 10.1): when enforcement enabled, a final SSE event `event: enforcement`
+    includes `{ request_id, mode, decisions, qa_summary, would_block, required_edits, audit_ok }`.
+  - Non-streaming responses include optional `enforcement` field with the same shape.
+
+### Enforcement Metadata (Phase 10.1)
+
+Optional metadata may be attached to generation responses (non-breaking). In advisory mode, content is never blocked; metadata provides visibility.
+
+- `enforcement` object (optional, advisory/enforced modes only):
+  ```json
+  {
+    "status": "off|advisory|enforced",
+    "workflowId": "uuid",
+    "policyVersion": "2025-12-25",
+    "checks": ["profanity", "tos_compliance", "length"],
+    "warnings": ["tweet length near 280 chars"]
+  }
+  ```
+
+Backward compatibility guarantees:
+- Field is optional; omission means enforcement disabled.
+- Existing streaming token contract remains unchanged; metadata may be sent as initial JSON envelope or terminal summary event (implementation detail).
+
+### Enforcement Failure Error Shape
+
+In enforced mode, failures include actionable `suggestedFix`.
+
+Example:
+```json
+{
+  "error": {
+    "code": "QA_REJECTED",
+    "message": "Content contains banned terms",
+    "suggestedFix": "Remove profanity and re-generate. See brand safety policy.",
+    "details": {
+      "banned": ["fuck", "shit"],
+      "check": "profanity"
+    }
+  }
+}
+```
+
+Additional examples:
+- `HARMFUL_CONTENT`: "Detected self-harm phrasing" → suggestedFix: "Refocus on growth/resilience; use provided redirection topic."
+- `CIRCUIT_BREAKER_TRIPPED`: "Optimizer failed 3x" → suggestedFix: "Proceed with writer draft; retry later."
+
+Notes:
+- Error shape is additive; does not alter HTTP status conventions.
+- `suggestedFix` follows existing patterns (see X 403 credential guidance).
 
 ## Payments
 
@@ -116,7 +165,15 @@ Invariants:
   - Posts a thread to X (Twitter)
   - Splits on newlines; chains replies; rate-limited 5 per 15m
   - Returns: { urls: string[] }
+  - Optional (Phase 10.1): accepts `enforcement` payload from generation; enforced mode
+    blocks publishing unless `enforcement.qa_summary.status === "PASS"`.
 
 Notes:
 - All time-based endpoints accept optional `now` for deterministic tests.
 - See .ai/TESTING.md for examples.
+
+### Backward Compatibility (Phase 10.1)
+
+- Enforcement metadata is optional and non-breaking.
+- Failure error shape adds fields under `error` without changing existing keys.
+- Advisory rollout ensures content flow unaffected while instrumentation is verified.

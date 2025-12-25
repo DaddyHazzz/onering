@@ -9,8 +9,24 @@ import { embedThread } from "@/lib/embeddings";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
+const enforcementSchema = z
+  .object({
+    qa_summary: z
+      .object({
+        status: z.enum(["PASS", "FAIL"]),
+        violation_codes: z.array(z.string()).optional(),
+        risk_score: z.number().optional(),
+      })
+      .optional(),
+    audit_ok: z.boolean().optional(),
+    required_edits: z.array(z.string()).optional(),
+    mode: z.enum(["off", "advisory", "enforced"]).optional(),
+  })
+  .optional();
+
 const schema = z.object({
   content: z.string().min(1),
+  enforcement: enforcementSchema,
 });
 
 const success = (payload: Record<string, unknown>, status = 200) =>
@@ -18,6 +34,8 @@ const success = (payload: Record<string, unknown>, status = 200) =>
 
 const failure = (error: string, status = 500, extra: Record<string, unknown> = {}) =>
   Response.json({ success: false, error, ...extra }, { status });
+
+const ENFORCEMENT_MODE = process.env.ONERING_ENFORCEMENT_MODE || "off";
 
 let _redis: Redis | null = null;
 function getRedis(): Redis {
@@ -99,7 +117,30 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { content } = schema.parse(body);
+    const { content, enforcement } = schema.parse(body);
+
+    if (ENFORCEMENT_MODE === "enforced") {
+      if (enforcement?.audit_ok === false) {
+        return failure("Audit log write failed", 503, {
+          code: "AUDIT_WRITE_FAILED",
+          suggestedFix: "Retry once audit storage is available or switch to advisory mode.",
+          details: {
+            audit_ok: false,
+          },
+        });
+      }
+      const qaStatus = enforcement?.qa_summary?.status;
+      if (qaStatus !== "PASS") {
+        return failure("QA blocked publishing", 403, {
+          code: "QA_BLOCKED",
+          suggestedFix: "Resolve required edits and regenerate content through the enforcement pipeline.",
+          details: {
+            required_edits: enforcement?.required_edits || [],
+            violation_codes: enforcement?.qa_summary?.violation_codes || [],
+          },
+        });
+      }
+    }
 
     // Verify credentials exist
     if (!process.env.TWITTER_API_KEY || !process.env.TWITTER_API_SECRET || !process.env.TWITTER_ACCESS_TOKEN || !process.env.TWITTER_ACCESS_TOKEN_SECRET) {

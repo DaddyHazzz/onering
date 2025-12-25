@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import sys
 from datetime import datetime, timedelta
@@ -6,7 +7,7 @@ from typing import Optional
 
 import re
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -40,6 +41,7 @@ try:
     from backend.core.tracing import setup_tracing
     from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode, insights
     from backend.agents.viral_thread import generate_viral_thread
+    from backend.features.enforcement.service import EnforcementRequest, run_enforcement_pipeline, get_enforcement_mode
     import groq
     from redis import Redis
     from rq import Queue
@@ -142,7 +144,7 @@ class GenerateRequest(BaseModel):
     stream: bool = True
 
 
-async def stream_groq_response(prompt: str):
+async def stream_groq_response(prompt: str, collector: list | None = None):
     """Stream tokens from Groq API as server-sent events."""
     groq_client = groq.Groq(api_key=os.getenv("GROQ_API_KEY"))
     logger = logging.getLogger("onering")
@@ -178,11 +180,16 @@ async def stream_groq_response(prompt: str):
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 cleaned = strip_numbering_line(line)
+                if collector is not None and cleaned:
+                    collector.append(cleaned)
                 if cleaned:
                     yield f"data: {cleaned}\n\n"
 
         if buffer.strip():
-            yield f"data: {strip_numbering_line(buffer)}\n\n"
+            cleaned = strip_numbering_line(buffer)
+            if collector is not None and cleaned:
+                collector.append(cleaned)
+            yield f"data: {cleaned}\n\n"
 
         logger.info("[/v1/generate/content] streaming completed")
     except Exception as e:
@@ -190,7 +197,7 @@ async def stream_groq_response(prompt: str):
         yield f"data: ERROR: {str(e)}\n\n"
 
 
-async def stream_viral_thread_response(prompt: str, user_id: str = None):
+async def stream_viral_thread_response(prompt: str, user_id: str = None, collector: list | None = None):
     """Stream a viral thread from LangGraph agent chain with pgvector context."""
     logger = logging.getLogger("onering")
     logger.info(f"[/v1/generate/content] generating viral thread for: {prompt[:50]}...")
@@ -211,6 +218,8 @@ async def stream_viral_thread_response(prompt: str, user_id: str = None):
             tweet_clean = strip_numbering_line(tweet.strip()).strip()
 
             if tweet_clean:
+                if collector is not None:
+                    collector.append(tweet_clean)
                 yield f"data: {tweet_clean}\n\n"
 
         logger.info("[/v1/generate/content] viral thread streaming completed")
@@ -219,8 +228,12 @@ async def stream_viral_thread_response(prompt: str, user_id: str = None):
         yield f"data: ERROR: {str(e)}\n\n"
 
 
+def _format_enforcement_event(payload: dict) -> str:
+    return f"event: enforcement\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
 @app.post("/v1/generate/content")
-async def generate_content(body: GenerateRequest):
+async def generate_content(body: GenerateRequest, request: Request):
     """Generate or stream content with deterministic validation shared for streaming/non-streaming."""
     logger = logging.getLogger("onering")
     logger.info(
@@ -243,15 +256,70 @@ async def generate_content(body: GenerateRequest):
         logger.error(f"[/v1/generate/content] invalid type: {body.type}")
         raise HTTPException(status_code=422, detail="type must be 'simple' or 'viral_thread'")
 
-    response_generator = (
-        stream_viral_thread_response(body.prompt, user_id=body.user_id)
-        if body.type == "viral_thread"
-        else stream_groq_response(body.prompt)
-    )
+    enforcement_mode = get_enforcement_mode()
+
+    def _build_enforcement_request(content: str) -> EnforcementRequest:
+        return EnforcementRequest(
+            prompt=body.prompt,
+            platform=body.platform,
+            user_id=body.user_id,
+            request_id=getattr(request.state, "request_id", None),
+            content=content,
+            publish_intent=False,
+        )
 
     if body.stream:
+        if enforcement_mode == "off":
+            response_generator = (
+                stream_viral_thread_response(body.prompt, user_id=body.user_id)
+                if body.type == "viral_thread"
+                else stream_groq_response(body.prompt)
+            )
+            return StreamingResponse(
+                response_generator,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        collector: list[str] = []
+        response_generator = (
+            stream_viral_thread_response(body.prompt, user_id=body.user_id, collector=collector)
+            if body.type == "viral_thread"
+            else stream_groq_response(body.prompt, collector=collector)
+        )
+
+        async def _stream_with_enforcement():
+            async for chunk in response_generator:
+                yield chunk
+            content = "\n".join(collector)
+            result = run_enforcement_pipeline(_build_enforcement_request(content))
+            enforcement_payload = {
+                "request_id": result.request_id,
+                "mode": result.mode,
+                "decisions": [
+                    {
+                        "agent_name": d.agent_name,
+                        "status": d.status,
+                        "violation_codes": d.violation_codes,
+                        "required_edits": d.required_edits,
+                        "decision_id": d.decision_id,
+                    }
+                    for d in result.decisions
+                ],
+                "qa_summary": result.qa_summary,
+                "would_block": result.would_block,
+                "required_edits": result.required_edits,
+                "audit_ok": result.audit_ok,
+                "warnings": result.warnings,
+            }
+            yield _format_enforcement_event(enforcement_payload)
+
         return StreamingResponse(
-            response_generator,
+            _stream_with_enforcement(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -262,12 +330,43 @@ async def generate_content(body: GenerateRequest):
 
     # Non-streaming: collect the same cleaned tokens deterministically
     content_parts = []
+    response_generator = (
+        stream_viral_thread_response(body.prompt, user_id=body.user_id)
+        if body.type == "viral_thread"
+        else stream_groq_response(body.prompt)
+    )
     async for chunk in response_generator:
         token = chunk.replace("data: ", "", 1).strip()
         if token and not token.startswith("ERROR:"):
             content_parts.append(token)
 
-    return {"content": "".join(content_parts)}
+    content = "".join(content_parts)
+    if enforcement_mode == "off":
+        return {"content": content}
+
+    enforcement_result = run_enforcement_pipeline(_build_enforcement_request(content))
+    return {
+        "content": content,
+        "enforcement": {
+            "request_id": enforcement_result.request_id,
+            "mode": enforcement_result.mode,
+            "decisions": [
+                {
+                    "agent_name": d.agent_name,
+                    "status": d.status,
+                    "violation_codes": d.violation_codes,
+                    "required_edits": d.required_edits,
+                    "decision_id": d.decision_id,
+                }
+                for d in enforcement_result.decisions
+            ],
+            "qa_summary": enforcement_result.qa_summary,
+            "would_block": enforcement_result.would_block,
+            "required_edits": enforcement_result.required_edits,
+            "audit_ok": enforcement_result.audit_ok,
+            "warnings": enforcement_result.warnings,
+        },
+    }
 
 # (startup handled by lifespan)
 

@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     AUDIT_ENABLED: bool = False
     AUDIT_SAMPLE_RATE: float = 1.0
 
+    # Enforcement (Phase 10.1)
+    ONERING_ENFORCEMENT_MODE: str = "off"  # off | advisory | enforced
+    ONERING_AUDIT_LOG: str = "1"  # "0" | "1"
+    ONERING_TOKEN_ISSUANCE: str = "off"  # off | shadow | live
+
     # Admin access (Phase 4.6: hybrid auth)
     ADMIN_KEY: Optional[str] = None  # Legacy key (backward compatible)
     ADMIN_AUTH_MODE: str = "hybrid"  # "clerk" | "legacy" | "hybrid"
