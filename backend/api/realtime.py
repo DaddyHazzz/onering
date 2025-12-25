@@ -56,7 +56,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
         origin = websocket.headers.get("origin")
         allowed = [o.strip() for o in settings.WS_ALLOWED_ORIGINS.split(",") if o.strip()]
         if allowed and allowed != ["*"] and (not origin or origin not in allowed):
-            log_event("info", "ws.origin_blocked", request_id=request_id, user_id=None, draft_id=draft_id, extra={"origin": origin, "connection_id": connection_id})
+            log_event("info", "ws.origin_blocked", request_id=request_id, user_id=None, draft_id=draft_id, event_type="ws.origin_blocked", extra={"origin": origin, "connection_id": connection_id})
             await _reject_and_close(websocket, request_id, "ws_limit", "Origin not allowed")
             return
     
@@ -76,6 +76,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
             request_id=request_id,
             user_id=None,
             draft_id=draft_id,
+            event_type="ws.unauthorized",
             extra={"connection_id": connection_id},
         )
         return
@@ -86,6 +87,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
         request_id=request_id,
         user_id=user_id,
         draft_id=draft_id,
+        event_type="ws.connected",
         extra={"connection_id": connection_id},
     )
     
@@ -93,16 +95,22 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
     if limits_enabled:
         counts = await hub.get_counts(draft_id, user_id)
         if counts["global"] >= settings.WS_MAX_SOCKETS_GLOBAL:
-            log_event("info", "ws.limit.global", request_id=request_id, user_id=user_id, draft_id=draft_id, extra={"connection_id": connection_id})
+            log_event("info", "ws.limit.global", request_id=request_id, user_id=user_id, draft_id=draft_id, event_type="ws.limit.global", extra={"connection_id": connection_id})
             await _reject_and_close(websocket, request_id, "ws_limit", "Global socket limit exceeded")
             return
         if counts["draft"] >= settings.WS_MAX_SOCKETS_PER_DRAFT:
-            log_event("info", "ws.limit.draft", request_id=request_id, user_id=user_id, draft_id=draft_id, extra={"connection_id": connection_id})
+            log_event("info", "ws.limit.draft", request_id=request_id, user_id=user_id, draft_id=draft_id, event_type="ws.limit.draft", extra={"connection_id": connection_id})
             await _reject_and_close(websocket, request_id, "ws_limit", "Draft socket limit exceeded")
             return
         if counts["user"] >= settings.WS_MAX_SOCKETS_PER_USER:
-            log_event("info", "ws.limit.user", request_id=request_id, user_id=user_id, draft_id=draft_id, extra={"connection_id": connection_id})
+            log_event("info", "ws.limit.user", request_id=request_id, user_id=user_id, draft_id=draft_id, event_type="ws.limit.user", extra={"connection_id": connection_id})
             await _reject_and_close(websocket, request_id, "ws_limit", "User socket limit exceeded")
+            return
+    if settings.MAX_WS_CONNECTIONS_PER_DRAFT and settings.MAX_WS_CONNECTIONS_PER_DRAFT > 0:
+        draft_counts = await hub.get_counts(draft_id, user_id)
+        if draft_counts["draft"] >= settings.MAX_WS_CONNECTIONS_PER_DRAFT:
+            log_event("warning", "ws.scale_cap.draft", request_id=request_id, user_id=user_id, draft_id=draft_id, event_type="ws.scale_cap.draft", extra={"connection_id": connection_id, "cap": settings.MAX_WS_CONNECTIONS_PER_DRAFT})
+            await _reject_and_close(websocket, request_id, "limit_exceeded", "Draft connection cap exceeded")
             return
 
     # Register in hub
@@ -125,7 +133,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
                 raw_message = await websocket.receive_text()
                 if limits_enabled:
                     if len(raw_message.encode("utf-8")) > settings.WS_MAX_MESSAGE_BYTES:
-                        log_event("info", "ws.payload_too_large", request_id=request_id, user_id=user_id, draft_id=draft_id, extra={"connection_id": connection_id})
+                        log_event("info", "ws.payload_too_large", request_id=request_id, user_id=user_id, draft_id=draft_id, event_type="ws.payload_too_large", extra={"connection_id": connection_id})
                         await _reject_and_close(websocket, request_id, "payload_too_large", "WS message too large")
                         break
                 try:
@@ -137,6 +145,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
                         request_id=request_id,
                         user_id=user_id,
                         draft_id=draft_id,
+                        event_type="ws.invalid_json",
                         extra={"error": str(e), "connection_id": connection_id},
                     )
                     break
@@ -144,11 +153,12 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
                 # Invalid JSON or connection lost
                 log_event(
                     "debug",
-                    "ws.receive_error",
-                    request_id=request_id,
-                    user_id=user_id,
-                    draft_id=draft_id,
-                    extra={"error": str(e), "connection_id": connection_id},
+                        "ws.receive_error",
+                        request_id=request_id,
+                        user_id=user_id,
+                        draft_id=draft_id,
+                        event_type="ws.receive_error",
+                        extra={"error": str(e), "connection_id": connection_id},
                 )
                 break
             
@@ -167,6 +177,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
                         request_id=request_id,
                         user_id=user_id,
                         draft_id=draft_id,
+                        event_type="ws.pong_failed",
                         extra={"error": str(e), "connection_id": connection_id},
                     )
                     break
@@ -180,6 +191,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
             request_id=request_id,
             user_id=user_id,
             draft_id=draft_id,
+            event_type="ws.disconnected",
             extra={"connection_id": connection_id},
         )
     except Exception as e:
@@ -189,6 +201,7 @@ async def websocket_endpoint(websocket: WebSocket, draft_id: str):
             request_id=request_id,
             user_id=user_id,
             draft_id=draft_id,
+            event_type="ws.loop_error",
             extra={"error": str(e), "connection_id": connection_id},
         )
     finally:

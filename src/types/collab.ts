@@ -65,8 +65,107 @@ export interface RingPassRequest {
   idempotency_key: string;
 }
 
+export interface AISuggestion {
+  mode: "next" | "rewrite" | "summary" | "commentary";
+  content: string;
+  ring_holder: boolean;
+  platform?: string;
+  generated_at?: string;
+}
+
+export type FormatPlatform = "x" | "youtube" | "instagram" | "blog";
+
+export interface FormatBlock {
+  type: "heading" | "text" | "hashtag" | "cta" | "media_note";
+  text: string;
+  heading?: string;
+}
+
+export interface PlatformOutput {
+  platform: FormatPlatform;
+  blocks: FormatBlock[];
+  plain_text: string;
+  character_count: number;
+  block_count: number;
+  warnings: string[];
+}
+
+export interface FormatOptions {
+  tone?: "professional" | "casual" | "witty" | "motivational" | "technical";
+  include_hashtags?: boolean;
+  include_cta?: boolean;
+  hashtag_count?: number;
+  hashtag_suggestions?: string[];
+  cta_text?: string;
+  cta_suggestions?: string[];
+}
+
+export interface FormatGenerateRequest {
+  draft_id: string;
+  platforms?: FormatPlatform[];
+  options?: FormatOptions;
+}
+
+export interface FormatGenerateResponse {
+  draft_id: string;
+  outputs: Record<FormatPlatform, PlatformOutput>;
+}
+
+// Timeline types (Phase 8.3)
+export type TimelineEventType = 
+  | "draft_created"
+  | "segment_added"
+  | "ring_passed"
+  | "collaborator_added"
+  | "ai_suggested"
+  | "format_generated"
+  | "other";
+
+export interface TimelineEvent {
+  event_id: string;
+  ts: string;  // ISO datetime
+  type: TimelineEventType;
+  actor_user_id: string | null;
+  draft_id: string;
+  summary: string;
+  meta: Record<string, any>;
+}
+
+export interface TimelineResponse {
+  draft_id: string;
+  events: TimelineEvent[];
+  next_cursor?: string;
+}
+
+export interface ContributorStats {
+  user_id: string;
+  segment_count: number;
+  segment_ids: string[];
+  first_ts: string;
+  last_ts: string;
+}
+
+export interface AttributionResponse {
+  draft_id: string;
+  contributors: ContributorStats[];
+}
+
+export interface ExportRequest {
+  format: "markdown" | "json";
+  include_credits?: boolean;
+}
+
+export interface ExportResponse {
+  draft_id: string;
+  format: string;
+  filename: string;
+  content_type: string;
+  content: string;
+}
+
 export type ErrorCode = 
   | "ring_required"
+  | "rate_limited"
   | "permission_denied"
   | "not_found"
   | "validation_error"

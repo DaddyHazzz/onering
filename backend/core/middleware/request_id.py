@@ -35,6 +35,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 "method": request.method,
                 "status": getattr(response, "status_code", None),
                 "latency_bucket": latency_bucket_ms(duration_ms),
+                "user_id": getattr(request.state, "user_id", None),
             },
         )
 

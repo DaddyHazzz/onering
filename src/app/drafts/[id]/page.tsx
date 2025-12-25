@@ -11,6 +11,7 @@ import { getDraft, appendSegment, passRing, isRingRequiredError, addCollaborator
 import { useDraftRealtime } from "@/hooks/useDraftRealtime";
 import { CollabDraft, APIError } from "@/types/collab";
 import DraftEditor from "@/components/DraftEditor";
+import AISuggestionsPanel from "@/components/AISuggestionsPanel";
 import SegmentTimeline from "@/components/SegmentTimeline";
 import RingControls from "@/components/RingControls";
 import CollaboratorPanel from "@/components/CollaboratorPanel";
@@ -31,6 +32,7 @@ export default function DraftDetailPage() {
   const params = useParams();
   const draftId = params.id as string;
   const currentUserId = typeof window !== "undefined" ? localStorage.getItem("test_user_id") || "" : "";
+  const isAuthenticated = !!currentUserId;
 
   const [draft, setDraft] = useState<CollabDraft | null>(null);
   const [loading, setLoading] = useState(true);
@@ -208,6 +210,13 @@ export default function DraftDetailPage() {
             isRingHolder={isRingHolder}
             onAppendSegment={handleAppendSegment}
             isAppending={appending}
+          />
+
+          <AISuggestionsPanel
+            draft={draft}
+            isRingHolder={isRingHolder}
+            isAuthenticated={isAuthenticated}
+            onInsertSegment={handleAppendSegment}
           />
 
           {/* Segments timeline */}

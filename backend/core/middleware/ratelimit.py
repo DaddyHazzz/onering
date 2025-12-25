@@ -7,6 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from backend.core.errors import RateLimitError, app_error_handler
+from backend.core.metrics import ratelimit_block_total, normalize_path
 from backend.core.logging import get_request_id
 from backend.core.ratelimit import InMemoryRateLimiter, RateLimitConfig, build_rate_limit_config_from_env
 
@@ -69,6 +70,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         rid = getattr(request.state, "request_id", None) or get_request_id()
+        ratelimit_block_total.inc(labels={"scope": normalize_path(request.url.path)})
+
         response = await app_error_handler(
             request,
             RateLimitError("Rate limit exceeded for this endpoint", request_id=rid),

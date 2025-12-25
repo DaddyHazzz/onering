@@ -111,6 +111,8 @@ def log_event(
     request_id: Optional[str],
     user_id: Optional[str] = None,
     draft_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    error_code: Optional[str] = None,
     extra: Optional[Dict[str, object]] = None,
 ):
     """Structured logging helper with safe truncation and request correlation."""
@@ -125,6 +127,10 @@ def log_event(
         "user_id": user_id,
         "draft_id": draft_id,
     }
+    if event_type:
+        payload["event_type"] = event_type
+    if error_code:
+        payload["error_code"] = error_code
     if extra:
         for k, v in extra.items():
             payload[k] = _safe_truncate(v)

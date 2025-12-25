@@ -135,8 +135,7 @@ async def get_current_user_id(
                     get_or_create_user(user_id)
                 except Exception as e:
                     logger.warning(f"Failed to upsert user {user_id}: {e}")
-                    # Continue - don't block auth if upsert fails
-                
+                request.state.user_id = user_id
                 return user_id
         except HTTPException:
             # Token is invalid, don't try X-User-Id
@@ -153,6 +152,7 @@ async def get_current_user_id(
         except Exception as e:
             logger.debug(f"Failed to upsert test user {x_user_id}: {e}")
         
+        request.state.user_id = x_user_id
         return x_user_id
     
     # No auth found

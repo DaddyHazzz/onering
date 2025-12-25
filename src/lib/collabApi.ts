@@ -14,6 +14,13 @@ import {
   CollabDraftRequest, 
   SegmentAppendRequest, 
   RingPassRequest,
+  AISuggestion,
+  FormatGenerateRequest,
+  FormatGenerateResponse,
+  TimelineResponse,
+  AttributionResponse,
+  ExportRequest,
+  ExportResponse,
   APIError 
 } from "@/types/collab";
 
@@ -62,7 +69,9 @@ async function apiFetch(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<any> {
-  const url = `${BASE_URL}${endpoint}`;
+  const url = endpoint.startsWith("http") || endpoint.startsWith("/v1/")
+    ? endpoint
+    : `${BASE_URL}${endpoint}`;
   const authHeaders = await getAuthHeaders();
   
   const headers = {
@@ -169,6 +178,75 @@ export async function addCollaborator(
   const response = await apiFetch(`/drafts/${draftId}/collaborators`, {
     method: "POST",
     body: JSON.stringify({}),
+  });
+  return response.data;
+}
+
+/**
+ * Get AI suggestion for a draft.
+ */
+export async function aiSuggest(
+  draftId: string,
+  mode: "next" | "rewrite" | "summary" | "commentary",
+  platform?: "x" | "youtube" | "instagram" | "blog"
+): Promise<AISuggestion> {
+  const response = await apiFetch("/v1/ai/suggest", {
+    method: "POST",
+    body: JSON.stringify({ draft_id: draftId, mode, platform: platform || null }),
+  });
+  return response.data;
+}
+
+/**
+ * Generate platform-specific formatted outputs from a draft.
+ */
+export async function formatGenerate(
+  request: FormatGenerateRequest
+): Promise<FormatGenerateResponse> {
+  const response = await apiFetch("/v1/format/generate", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+  return response.data;
+}
+
+/**
+ * Get timeline events for a draft (Phase 8.3).
+ */
+export async function getTimeline(
+  draftId: string,
+  params?: { limit?: number; asc?: boolean; cursor?: string }
+): Promise<TimelineResponse> {
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.append("limit", String(params.limit));
+  if (params?.asc !== undefined) queryParams.append("asc", String(params.asc));
+  if (params?.cursor) queryParams.append("cursor", params.cursor);
+  
+  const url = `/v1/timeline/drafts/${draftId}${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+  const response = await apiFetch(url, { method: "GET" });
+  return response.data;
+}
+
+/**
+ * Get contributor attribution for a draft (Phase 8.3).
+ */
+export async function getAttribution(draftId: string): Promise<AttributionResponse> {
+  const response = await apiFetch(`/v1/timeline/drafts/${draftId}/attribution`, {
+    method: "GET",
+  });
+  return response.data;
+}
+
+/**
+ * Export draft in markdown or JSON format with optional credits (Phase 8.3).
+ */
+export async function exportDraft(
+  draftId: string,
+  request: ExportRequest
+): Promise<ExportResponse> {
+  const response = await apiFetch(`/v1/export/drafts/${draftId}`, {
+    method: "POST",
+    body: JSON.stringify(request),
   });
   return response.data;
 }

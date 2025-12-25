@@ -69,6 +69,15 @@ backend/.venv/
 venv/
 .venv
 
+# Test artifacts (pytest binary output files at root level)
+/test-output.txt
+/test_result.txt
+/test_results.txt
+/.pytest_cache/
+.pytest_cache/
+pytest_cache/
+*.pytest_cache
+
 # IDE
 .vscode/
 .idea/

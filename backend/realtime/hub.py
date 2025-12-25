@@ -11,6 +11,13 @@ from fastapi import WebSocket
 import asyncio
 import logging
 
+from backend.core.metrics import (
+    drafts_active_rooms,
+    ws_active_connections,
+    ws_connections_total,
+    ws_messages_sent_total,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,6 +57,9 @@ class DraftHub:
             if user_id:
                 self._user_counts[user_id] = self._user_counts.get(user_id, 0) + 1
             self._global_count += 1
+            ws_connections_total.inc()
+            ws_active_connections.set(self._global_count)
+            drafts_active_rooms.set(len(self._rooms))
             logger.debug(f"[HUB] Registered socket for draft {draft_id}. Total: {len(self._rooms[draft_id])}")
     
     async def unregister(self, draft_id: str, websocket: WebSocket) -> None:
@@ -78,6 +88,8 @@ class DraftHub:
                     logger.debug(f"[HUB] Cleaned up empty room for draft {draft_id}")
                 else:
                     logger.debug(f"[HUB] Unregistered socket for draft {draft_id}. Remaining: {len(self._rooms[draft_id])}")
+            ws_active_connections.set(self._global_count)
+            drafts_active_rooms.set(len(self._rooms))
     
     async def broadcast(self, draft_id: str, message: dict) -> None:
         """
@@ -99,6 +111,8 @@ class DraftHub:
         dead_sockets = []
         for ws in sockets:
             try:
+                event_type = message.get("type") if isinstance(message, dict) else "unknown"
+                ws_messages_sent_total.inc(labels={"event_type": str(event_type) if event_type else "unknown"})
                 await ws.send_json(message)
             except Exception as e:
                 logger.debug(f"[HUB] Failed to send to socket: {e}")

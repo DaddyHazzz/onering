@@ -67,6 +67,11 @@ class QuotaExceededError(AppError):
     status_code = 403
 
 
+class LimitExceededError(AppError):
+    code = "limit_exceeded"
+    status_code = 429
+
+
 class AdminAuditWriteError(AppError):
     code = "admin_audit_failed"
     status_code = 500
@@ -91,6 +96,13 @@ def _error_payload(code: str, message: str, request_id: str) -> dict:
 async def app_error_handler(request: Request, exc: AppError):
     rid = exc.request_id or _extract_request_id(request)
     payload = _error_payload(exc.code, exc.message, rid)
+    logger = logging.getLogger("onering")
+    log_level = logging.ERROR if exc.status_code >= 500 else logging.WARNING
+    logger.log(
+        log_level,
+        "app.error",
+        extra={"request_id": rid, "error_code": exc.code, "error_message": exc.message, "status": exc.status_code},
+    )
     response = JSONResponse(status_code=exc.status_code, content=payload)
     response.headers["x-request-id"] = rid
     return response
@@ -101,6 +113,8 @@ async def http_error_handler(request: Request, exc: HTTPException):
     code = "not_found" if exc.status_code == 404 else "http_error"
     message = exc.detail if exc.detail else "HTTP error"
     payload = _error_payload(code, message, rid)
+    logger = logging.getLogger("onering")
+    logger.warning("http.error", extra={"request_id": rid, "error_code": code, "status": exc.status_code})
     response = JSONResponse(status_code=exc.status_code, content=payload)
     response.headers["x-request-id"] = rid
     return response
@@ -109,7 +123,7 @@ async def http_error_handler(request: Request, exc: HTTPException):
 async def unhandled_exception_handler(request: Request, exc: Exception):
     rid = _extract_request_id(request)
     logger = logging.getLogger("onering")
-    logger.error("unhandled.exception", exc_info=True, extra={"request_id": rid})
+    logger.error("unhandled.exception", exc_info=True, extra={"request_id": rid, "error_code": "internal_error"})
     payload = _error_payload("internal_error", "Unexpected error", rid)
     response = JSONResponse(status_code=500, content=payload)
     response.headers["x-request-id"] = rid

@@ -1,9 +1,8 @@
 # OneRing — Project State (Canonical)
 
-**Last Updated:** December 28, 2025 (Phase 6.2 Complete)  
-**Status:** Phase 6.2 COMPLETE (Real-Time Collaboration via WebSockets) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅ | Phase 5.3 COMPLETE (Frontend Collaboration UX) ✅  
-**Test Coverage:** Backend: 548/548 tests passing (100%) ✅ | Frontend: 311/311 tests passing (100%) ✅ | **Total: 859/859** ✅ | **Warnings: 0** ✅  
-**Python Compatibility:** 3.10+ to 3.14+ ✅ (Datetime deprecations eliminated)
+**Last Updated:** December 24, 2025 (Phase 8.3 Complete)  
+**Status:** Phase 8.3 COMPLETE (Timeline + Export) ✅ | Phase 8.2 COMPLETE (Auto-Format for Platform) ✅ | Phase 8.1 COMPLETE (Ring-Aware AI Turn Suggestions) ✅ | Phase 6.2 COMPLETE (Real-Time Collaboration via WebSockets) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅ | Phase 5.3 COMPLETE (Frontend Collaboration UX) ✅  
+**Test Coverage:** Backend: 592/592 tests passing (100%) ✅ | Frontend: 359/359 tests passing (100%) ✅ | **Total: 951/951** ✅ | **Warnings: 0** ✅  
 **Python Compatibility:** 3.10+ to 3.14+ ✅ (Datetime deprecations eliminated)
 
 OneRing is a creator-first collaboration platform centered around a daily pull loop: creators build threads (streaks), receive AI coaching on momentum, share work with collaborators, and iterate together. The platform prioritizes authenticity over vanity metrics, deterministic behavior over machine learning unpredictability, and safety over convenience. Core design commitment: no dark patterns, no shame language, no hidden engagement manipulation. Users create together, track momentum linearly, and monetize through RING token economics.
@@ -47,6 +46,120 @@ OneRing is a creator-first collaboration platform centered around a daily pull l
 - Deterministic tests (fixed timestamps) prevent flakiness
 - Safety tests explicitly verify no secret leakage
 - Bounds tests ensure metrics stay within expected ranges
+
+---
+
+## Phase 8.3 — Collaboration History Timeline + Export with Attribution ✅ COMPLETE
+
+**Scope:** Auditable collaboration history with beautiful timeline UI and professional export functionality (markdown/JSON with credits).
+
+**What Shipped:**
+- Timeline service aggregating audit logs into normalized events (draft_created, segment_added, ring_passed, collaborator_added, ai_suggested, format_generated).
+- Attribution tracking showing contributor stats (segment counts, date ranges).
+- Export service generating markdown (blog-ready) and JSON (structured) with optional credits section.
+- New `/v1/timeline/drafts/{id}`, `/v1/timeline/drafts/{id}/attribution`, `/v1/export/drafts/{id}` endpoints with auth, rate limits (60/min timeline, 20/min export), tracing, audit logs.
+- Frontend `CollabTimeline` component with emoji icons (✨🧑👑➕🤖📋), relative timestamps, pagination ("Load More"), refresh.
+- Frontend `ExportPanel` component with top 3 contributors summary, include credits checkbox, markdown/JSON export buttons triggering file downloads.
+- 40+ unit tests (backend 15, frontend 25) verifying mapping, aggregation, export formats, API contracts.
+
+**Key Design Decisions:**
+- **Audit Log as Source:** No new tables; uses existing `audit_events` table (Phase 6.3) for timeline and attribution.
+- **Deterministic Service Layer:** Pure aggregation and rendering; no AI calls.
+- **Human-Readable Summaries:** Event mapping generates contextual summaries ("@user1 created draft 'Title'").
+- **Professional Export:** Markdown with segment headers + credits block; JSON with structured data + contributor metadata.
+- **Top 3 Contributors:** UI shows top 3 to avoid clutter; full list in export.
+
+**Safety & Contracts:**
+- No breaking changes; complements existing APIs.
+- Access control: only owner or collaborators can view timeline/attribution/export.
+- Rate limits prevent abuse (60/min read-only, 20/min export).
+- Audit logs every timeline/attribution/export request with metadata.
+- Tracing spans: `timeline.get_timeline`, `timeline.get_attribution`, `api.export.draft`.
+
+**Files Added:**
+- `backend/features/timeline/__init__.py`
+- `backend/features/timeline/models.py` — `TimelineEvent`, `TimelineResponse`, `ContributorStats`, `AttributionResponse`
+- `backend/features/timeline/mapping.py` — Audit-to-timeline event mapper with human summaries
+- `backend/features/timeline/service.py` — Timeline aggregation and attribution tracking
+- `backend/features/timeline/export.py` — Markdown and JSON export generators
+- `backend/api/timeline.py` — `/v1/timeline/drafts/{id}`, `/v1/timeline/drafts/{id}/attribution` endpoints
+- `backend/api/export.py` — `/v1/export/drafts/{id}` endpoint
+- `src/components/CollabTimeline.tsx` — Timeline UI with icons, relative timestamps, pagination
+- `src/components/ExportPanel.tsx` — Export UI with credits summary and download buttons
+- `backend/tests/test_timeline_and_export.py` — 15 backend test cases (mapping, aggregation, export, API)
+- `src/__tests__/collab-timeline.spec.tsx` — 12 frontend timeline tests
+- `src/__tests__/export-panel.spec.tsx` — 13 frontend export tests
+- `docs/PHASE8_TIMELINE_EXPORT.md` — Full documentation with event types, export formats, integration guide
+
+**Files Modified:**
+- `backend/main.py` — Added timeline and export router imports and includes
+- `src/types/collab.ts` — Added timeline and export types (TimelineEvent, TimelineResponse, etc.)
+- `src/lib/collabApi.ts` — Added `getTimeline()`, `getAttribution()`, `exportDraft()` methods
+- `docs/ROADMAP.md` — Marked Tier 1 #3 and Tier 3 #8 COMPLETE
+
+**Test Results:** Backend 592/592 passing (15 new), Frontend 359/359 passing (25 new), Total 951/951 ✅
+
+---
+
+## Phase 8.2 — Auto-Format for Platform ✅ COMPLETE
+
+**Scope:** Deterministic platform-specific formatter converting collaborative drafts to X/YouTube/Instagram/Blog outputs.
+
+**What Shipped:**
+- Format service with templates (platform rules), validators (constraint enforcement), and deterministic formatter logic.
+- New `/v1/format/generate` endpoint with auth, rate limits (20/min burst 10), tracing, audit logs.
+- Frontend `PlatformVersionsPanel` component with tabbed UI, copy/export (TXT/MD/CSV), options panel.
+- Normalized block schema (`type`, `text`, `heading`, optional) + `plain_text` fallback per platform.
+- 30+ unit tests (backend 10, frontend 20+) verifying determinism, constraints, error handling.
+
+**Key Design Decisions:**
+- **Deterministic (No AI):** Same input always produces identical output—no LLM calls, no randomness.
+- **Constraint-Based:** Each platform has max char/block, heading style, hashtag format, CTA format.
+- **Segment-Aware:** Extracts segments, converts to blocks, enforces constraints, renders plain text.
+- **Customizable:** Options for tone (UI placeholder), hashtag count, custom CTA, include/exclude hashtags.
+
+**Safety & Contracts:**
+- No breaking changes; complements Phase 8.1 AI suggestions.
+- Rate limit prevents abuse (20/min vs 10/min for AI, since formatting is cheaper).
+- Audit logs every format request; tracing spans capture platform count and duration.
+- Error normalization: 401 (auth), 403 (access), 404 (draft), 400 (invalid platform), 429 (rate limit), 500 (server).
+
+**Files Added:**
+- `backend/features/format/__init__.py`
+- `backend/features/format/templates.py` — Platform rules (X, YouTube, Instagram, Blog)
+- `backend/features/format/validators.py` — `FormatOptions`, block length validation, constraint enforcement
+- `backend/features/format/service.py` — Main `FormatService` with deterministic formatter
+- `backend/api/format.py` — FastAPI `/v1/format/generate` endpoint
+- `src/components/PlatformVersionsPanel.tsx` — React UI with tabs, copy, export
+- `backend/tests/test_format_generate.py` — 10 backend test cases (determinism, constraints, API)
+- `src/__tests__/platform-versions.spec.tsx` — 20+ frontend test cases (rendering, API, export)
+- `docs/PHASE8_PLATFORM_FORMATTING.md` — Full documentation with examples
+
+**Files Modified:**
+- `backend/main.py` — Added format router import and include
+- `src/types/collab.ts` — Added `FormatBlock`, `PlatformOutput`, `FormatOptions`, `FormatGenerateRequest/Response`
+- `src/lib/collabApi.ts` — Added `formatGenerate()` API client method
+- `.gitignore` — Added test artifact patterns (test-output.txt, test_result.txt, etc.)
+- `backend/pytest.ini` — Added `testpaths`, `norecursedirs` to prevent root-level file interference
+
+**Test Results:** Backend 577/577 passing (10 new), Frontend 334/334 passing (20+ new), Total 911/911 ✅
+
+---
+
+## Phase 8.1 — AI Turn Suggestions ✅ COMPLETE
+
+**Scope:** Additive, ring-aware AI assistant that proposes turns without mutating drafts.
+
+**What Shipped:**
+- AI suggestion service (next, rewrite, summary, commentary) with ring enforcement.
+- New `/v1/ai/suggest` endpoint with auth, rate limits (10/min burst 5), tracing, audit logs.
+- Platform-aware prompt scaffolding for X, YouTube, Instagram, Blog.
+- Draft page panel for holders (action buttons + insert) and non-holders (commentary).
+
+**Safety & Contracts:**
+- No breaking changes; suggestions are read-only previews.
+- `ring_required` for mutative modes without the ring; consistent error contract with `request_id`.
+- Observability: audit `ai_suggest`, tracing spans, rate-limit metrics.
 
 ---
 

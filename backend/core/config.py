@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE_DEFAULT: int = 120
     RATE_LIMIT_BURST_DEFAULT: int = 30
 
+    # Observability / Tracing (Phase 7)
+    OTEL_ENABLED: bool = False
+    OTEL_EXPORTER: str = "console"  # console | memory
+
     # WebSocket limits (Phase 6.3)
     WS_LIMITS_ENABLED: bool = False
     WS_MAX_SOCKETS_PER_USER: int = 3
@@ -55,6 +59,11 @@ class Settings(BaseSettings):
     WS_MAX_SOCKETS_GLOBAL: int = 1000
     WS_MAX_MESSAGE_BYTES: int = 4096
     WS_ALLOWED_ORIGINS: str = "*"  # comma-separated
+
+    # Scale safety caps (Phase 7)
+    MAX_WS_CONNECTIONS_PER_DRAFT: int = 0  # 0 = disabled
+    MAX_COLLABORATORS_PER_DRAFT: int = 0  # 0 = disabled
+    MAX_SEGMENTS_PER_DRAFT: int = 0  # 0 = disabled (soft cap: warn only)
 
     # Audit logging (Phase 6.3)
     AUDIT_ENABLED: bool = False

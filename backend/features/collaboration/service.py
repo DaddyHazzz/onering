@@ -19,9 +19,12 @@ from backend.models.collab import (
     RingPassRequest,
 )
 from backend.features.collaboration.persistence import DraftPersistence
-from backend.core.errors import NotFoundError, PermissionError, ValidationError, RingRequiredError
+from backend.core.config import settings
+from backend.core.errors import NotFoundError, PermissionError, ValidationError, RingRequiredError, LimitExceededError
 from backend.features.audit.service import record_audit_event
-from backend.core.logging import get_request_id
+from backend.core.logging import get_request_id, log_event
+from backend.core.metrics import collab_mutations_total, ws_messages_sent_total
+from backend.core.tracing import start_span
 
 # In-memory stub store (fallback when DB not available)
 _drafts_store: Dict[str, CollabDraft] = {}
@@ -63,6 +66,12 @@ def emit_event(event_type: str, payload: dict, request_id: Optional[str] = None)
         "request_id": request_id or get_request_id(default="n/a"),
         "data": payload,
     }
+
+    # Count broadcast intent (per event_type)
+    try:
+        ws_messages_sent_total.inc(labels={"event_type": event_type})
+    except Exception:
+        pass
     
     # Broadcast asynchronously (don't block REST response)
     try:
@@ -176,90 +185,93 @@ def create_draft(user_id: str, request: CollabDraftRequest) -> CollabDraft:
     from backend.features.entitlements.service import enforce_entitlement
     enforce_entitlement(user_id, "drafts.max", requested=1, usage_key="drafts.created")
     
-    draft_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    with start_span("collab.create_draft", {"user_id": user_id}):
+        draft_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
 
-    # Initialize ring state
-    ring_state = RingState(
-        draft_id=draft_id,
-        current_holder_id=user_id,
-        holders_history=[user_id],
-        passed_at=now,
-        last_passed_at=now,  # Phase 3.3a: Track initial pass time
-    )
-
-    # Initialize segments
-    segments: List[DraftSegment] = []
-    if request.initial_segment:
-        segment = DraftSegment(
-            segment_id=str(uuid.uuid4()),
+        # Initialize ring state
+        ring_state = RingState(
             draft_id=draft_id,
-            user_id=user_id,
-            content=request.initial_segment,
+            current_holder_id=user_id,
+            holders_history=[user_id],
+            passed_at=now,
+            last_passed_at=now,  # Phase 3.3a: Track initial pass time
+        )
+
+        # Initialize segments
+        segments: List[DraftSegment] = []
+        if request.initial_segment:
+            segment = DraftSegment(
+                segment_id=str(uuid.uuid4()),
+                draft_id=draft_id,
+                user_id=user_id,
+                content=request.initial_segment,
+                created_at=now,
+                segment_order=0,
+                # Phase 3.3a: Attribution for initial segment
+                author_user_id=user_id,
+                author_display=display_for_user(user_id),
+                ring_holder_user_id_at_write=user_id,
+                ring_holder_display_at_write=display_for_user(user_id),
+            )
+            segments.append(segment)
+
+        draft = CollabDraft(
+            draft_id=draft_id,
+            creator_id=user_id,
+            title=request.title,
+            platform=request.platform,
+            status=DraftStatus.ACTIVE,
+            segments=segments,
+            ring_state=ring_state,
             created_at=now,
-            segment_order=0,
-            # Phase 3.3a: Attribution for initial segment
-            author_user_id=user_id,
-            author_display=display_for_user(user_id),
-            ring_holder_user_id_at_write=user_id,
-            ring_holder_display_at_write=display_for_user(user_id),
+            updated_at=now,
         )
-        segments.append(segment)
 
-    draft = CollabDraft(
-        draft_id=draft_id,
-        creator_id=user_id,
-        title=request.title,
-        platform=request.platform,
-        status=DraftStatus.ACTIVE,
-        segments=segments,
-        ring_state=ring_state,
-        created_at=now,
-        updated_at=now,
-    )
+        # Store (use persistence if available)
+        persistence = _get_persistence()
+        if persistence:
+            persistence.create_draft(draft)
+        else:
+            _drafts_store[draft_id] = draft
 
-    # Store (use persistence if available)
-    persistence = _get_persistence()
-    if persistence:
-        persistence.create_draft(draft)
-    else:
-        _drafts_store[draft_id] = draft
+        # Phase 4.1: Emit usage event
+        try:
+            from backend.features.usage.service import emit_usage_event
+            emit_usage_event(
+                user_id=user_id,
+                usage_key="drafts.created",
+                occurred_at=now,
+                metadata={"draft_id": draft_id}
+            )
+        except Exception:
+            # Graceful degradation if usage tracking fails
+            pass
 
-    # Phase 4.1: Emit usage event
-    try:
-        from backend.features.usage.service import emit_usage_event
-        emit_usage_event(
+        # Audit event
+        record_audit_event(
+            action="collab.create_draft",
             user_id=user_id,
-            usage_key="drafts.created",
-            occurred_at=now,
-            metadata={"draft_id": draft_id}
+            draft_id=draft_id,
+            request_id=get_request_id(),
+            metadata={"title": request.title, "platform": request.platform},
         )
-    except Exception:
-        # Graceful degradation if usage tracking fails
-        pass
 
-    # Audit event
-    record_audit_event(
-        action="collab.create_draft",
-        user_id=user_id,
-        draft_id=draft_id,
-        request_id=get_request_id(),
-        metadata={"title": request.title, "platform": request.platform},
-    )
+        collab_mutations_total.inc(labels={"type": "create_draft"})
 
-    # Emit event
-    emit_event(
-        "collab.draft_created",
-        {
-            "draft_id": draft_id,
-            "creator_id": user_id,
-            "title": request.title,
-            "platform": request.platform,
-            "created_at": now.isoformat(),
-        },
-    )
+        # Emit event
+        emit_event(
+            "collab.draft_created",
+            {
+                "draft_id": draft_id,
+                "creator_id": user_id,
+                "title": request.title,
+                "platform": request.platform,
+                "created_at": now.isoformat(),
+            },
+        )
 
-    return draft
+        return draft
 
 
 def get_draft(draft_id: str, compute_metrics_flag: bool = True, now: Optional[datetime] = None) -> Optional[CollabDraft]:
@@ -339,110 +351,125 @@ def append_segment(
             f"User {user_id} must hold the ring to append segments to draft {draft_id}"
         )
 
+    if settings.MAX_SEGMENTS_PER_DRAFT and settings.MAX_SEGMENTS_PER_DRAFT > 0:
+        if len(draft.segments) >= settings.MAX_SEGMENTS_PER_DRAFT:
+            log_event(
+                "warning",
+                "collab.segments_soft_cap",
+                request_id=get_request_id(),
+                user_id=user_id,
+                draft_id=draft_id,
+                event_type="collab.segments_soft_cap",
+                extra={"cap": settings.MAX_SEGMENTS_PER_DRAFT, "current": len(draft.segments)},
+            )
+
     # Check idempotency - use composite key (draft_id:idempotency_key)
     composite_idempotency_key = f"{draft_id}:{request.idempotency_key}"
     persistence = _get_persistence()
-    if persistence:
-        is_dupe = persistence.check_idempotency(composite_idempotency_key)
-        if is_dupe:
-            # Idempotent: already appended, return current state
-            return draft
-    else:
-        if composite_idempotency_key in _idempotency_keys:
-            # Idempotent: already appended, return current state
-            return draft
+    with start_span("collab.append_segment", {"draft_id": draft_id, "user_id": user_id}):
+        if persistence:
+            is_dupe = persistence.check_idempotency(composite_idempotency_key)
+            if is_dupe:
+                # Idempotent: already appended, return current state
+                return draft
+        else:
+            if composite_idempotency_key in _idempotency_keys:
+                # Idempotent: already appended, return current state
+                return draft
 
-    # Append segment
-    now = datetime.now(timezone.utc)
-    # Ensure user exists in User domain
-    try:
-        from backend.features.users.service import get_or_create_user
-        get_or_create_user(user_id)
-    except Exception:
-        pass
-    # Phase 4.2: Hard enforcement (segments)
-    from backend.features.entitlements.service import enforce_entitlement
-    enforce_entitlement(user_id, "segments.max", requested=1, usage_key="segments.appended", now=now)
-    ring_holder_id = draft.ring_state.current_holder_id
-    segment = DraftSegment(
-        segment_id=str(uuid.uuid4()),
-        draft_id=draft_id,
-        user_id=user_id,
-        content=request.content,
-        created_at=now,
-        segment_order=len(draft.segments),
-        idempotency_key=request.idempotency_key,
-        # Phase 3.3a: Attribution
-        author_user_id=user_id,
-        author_display=display_for_user(user_id),
-        ring_holder_user_id_at_write=ring_holder_id,
-        ring_holder_display_at_write=display_for_user(ring_holder_id),
-    )
-
-    # Update draft (must create new instance since frozen=True)
-    updated_draft = CollabDraft(
-        draft_id=draft.draft_id,
-        creator_id=draft.creator_id,
-        title=draft.title,
-        platform=draft.platform,
-        status=draft.status,
-        segments=draft.segments + [segment],
-        ring_state=draft.ring_state,
-        collaborators=draft.collaborators,
-        pending_invites=draft.pending_invites,
-        created_at=draft.created_at,
-        updated_at=now,
-        target_publish_at=draft.target_publish_at,
-    )
-
-    # Store updated draft
-    if persistence:
-        persistence.append_segment(draft_id, segment)
-        persistence.record_idempotency(composite_idempotency_key, scope="collab")
-        # Reload draft to get updated state
-        updated_draft = persistence.get_draft(draft_id)
-    else:
-        _drafts_store[draft_id] = updated_draft
-        _idempotency_keys.add(composite_idempotency_key)
-
-    # Phase 4.1: Emit usage event
-    try:
-        from backend.features.usage.service import emit_usage_event
-        emit_usage_event(
+        # Append segment
+        now = datetime.now(timezone.utc)
+        # Ensure user exists in User domain
+        try:
+            from backend.features.users.service import get_or_create_user
+            get_or_create_user(user_id)
+        except Exception:
+            pass
+        # Phase 4.2: Hard enforcement (segments)
+        from backend.features.entitlements.service import enforce_entitlement
+        enforce_entitlement(user_id, "segments.max", requested=1, usage_key="segments.appended", now=now)
+        ring_holder_id = draft.ring_state.current_holder_id
+        segment = DraftSegment(
+            segment_id=str(uuid.uuid4()),
+            draft_id=draft_id,
             user_id=user_id,
-            usage_key="segments.appended",
-            occurred_at=now,
-            metadata={"draft_id": draft_id, "segment_id": segment.segment_id}
+            content=request.content,
+            created_at=now,
+            segment_order=len(draft.segments),
+            idempotency_key=request.idempotency_key,
+            # Phase 3.3a: Attribution
+            author_user_id=user_id,
+            author_display=display_for_user(user_id),
+            ring_holder_user_id_at_write=ring_holder_id,
+            ring_holder_display_at_write=display_for_user(ring_holder_id),
         )
-    except Exception:
-        # Graceful degradation if usage tracking fails
-        pass
 
-    record_audit_event(
-        action="collab.append_segment",
-        user_id=user_id,
-        draft_id=draft_id,
-        request_id=get_request_id(),
-        metadata={
-            "segment_id": segment.segment_id,
-            "content_len": len(request.content or ""),
-            "idempotency_key": request.idempotency_key,
-        },
-    )
+        # Update draft (must create new instance since frozen=True)
+        updated_draft = CollabDraft(
+            draft_id=draft.draft_id,
+            creator_id=draft.creator_id,
+            title=draft.title,
+            platform=draft.platform,
+            status=draft.status,
+            segments=draft.segments + [segment],
+            ring_state=draft.ring_state,
+            collaborators=draft.collaborators,
+            pending_invites=draft.pending_invites,
+            created_at=draft.created_at,
+            updated_at=now,
+            target_publish_at=draft.target_publish_at,
+        )
 
-    # Emit event
-    emit_event(
-        "collab.segment_added",
-        {
-            "draft_id": draft_id,
-            "segment_id": segment.segment_id,
-            "user_id": user_id,
-            "segment_order": segment.segment_order,
-            "created_at": now.isoformat(),
-        },
-    )
+        # Store updated draft
+        if persistence:
+            persistence.append_segment(draft_id, segment)
+            persistence.record_idempotency(composite_idempotency_key, scope="collab")
+            # Reload draft to get updated state
+            updated_draft = persistence.get_draft(draft_id)
+        else:
+            _drafts_store[draft_id] = updated_draft
+            _idempotency_keys.add(composite_idempotency_key)
 
-    return updated_draft
+        # Phase 4.1: Emit usage event
+        try:
+            from backend.features.usage.service import emit_usage_event
+            emit_usage_event(
+                user_id=user_id,
+                usage_key="segments.appended",
+                occurred_at=now,
+                metadata={"draft_id": draft_id, "segment_id": segment.segment_id}
+            )
+        except Exception:
+            # Graceful degradation if usage tracking fails
+            pass
+
+        record_audit_event(
+            action="collab.append_segment",
+            user_id=user_id,
+            draft_id=draft_id,
+            request_id=get_request_id(),
+            metadata={
+                "segment_id": segment.segment_id,
+                "content_len": len(request.content or ""),
+                "idempotency_key": request.idempotency_key,
+            },
+        )
+
+        # Emit event
+        emit_event(
+            "collab.segment_added",
+            {
+                "draft_id": draft_id,
+                "segment_id": segment.segment_id,
+                "user_id": user_id,
+                "segment_order": segment.segment_order,
+                "created_at": now.isoformat(),
+            },
+        )
+
+        collab_mutations_total.inc(labels={"type": "append_segment"})
+
+        return updated_draft
 
 
 def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> CollabDraft:
@@ -471,87 +498,90 @@ def pass_ring(draft_id: str, from_user_id: str, request: RingPassRequest) -> Col
             f"Cannot pass ring to {request.to_user_id} (not owner or collaborator)"
         )
 
-    # Ensure both users exist in User domain
-    try:
-        from backend.features.users.service import get_or_create_user
-        get_or_create_user(from_user_id)
-        get_or_create_user(request.to_user_id)
-    except Exception:
-        pass
+    with start_span("collab.pass_ring", {"draft_id": draft_id, "from_user_id": from_user_id, "to_user_id": request.to_user_id}):
+        # Ensure both users exist in User domain
+        try:
+            from backend.features.users.service import get_or_create_user
+            get_or_create_user(from_user_id)
+            get_or_create_user(request.to_user_id)
+        except Exception:
+            pass
 
-    # Check idempotency
-    persistence = _get_persistence()
-    if persistence:
-        is_dupe = persistence.check_idempotency(request.idempotency_key)
-        if is_dupe:
-            # Idempotent: ring already passed, return current state
-            return draft
-    else:
-        if request.idempotency_key in _idempotency_keys:
-            # Idempotent: ring already passed, return current state
-            return draft
+        # Check idempotency
+        persistence = _get_persistence()
+        if persistence:
+            is_dupe = persistence.check_idempotency(request.idempotency_key)
+            if is_dupe:
+                # Idempotent: ring already passed, return current state
+                return draft
+        else:
+            if request.idempotency_key in _idempotency_keys:
+                # Idempotent: ring already passed, return current state
+                return draft
 
-    # Pass ring
-    now = datetime.now(timezone.utc)
-    updated_ring_state = RingState(
-        draft_id=draft.ring_state.draft_id,
-        current_holder_id=request.to_user_id,
-        holders_history=draft.ring_state.holders_history + [request.to_user_id],
-        passed_at=now,
-        last_passed_at=now,  # Phase 3.3a: Track last pass time
-        idempotency_key=request.idempotency_key,
-    )
+        # Pass ring
+        now = datetime.now(timezone.utc)
+        updated_ring_state = RingState(
+            draft_id=draft.ring_state.draft_id,
+            current_holder_id=request.to_user_id,
+            holders_history=draft.ring_state.holders_history + [request.to_user_id],
+            passed_at=now,
+            last_passed_at=now,  # Phase 3.3a: Track last pass time
+            idempotency_key=request.idempotency_key,
+        )
 
-    updated_draft = CollabDraft(
-        draft_id=draft.draft_id,
-        creator_id=draft.creator_id,
-        title=draft.title,
-        platform=draft.platform,
-        status=draft.status,
-        segments=draft.segments,
-        ring_state=updated_ring_state,
-        collaborators=draft.collaborators,
-        pending_invites=draft.pending_invites,
-        created_at=draft.created_at,
-        updated_at=now,
-        target_publish_at=draft.target_publish_at,
-    )
+        updated_draft = CollabDraft(
+            draft_id=draft.draft_id,
+            creator_id=draft.creator_id,
+            title=draft.title,
+            platform=draft.platform,
+            status=draft.status,
+            segments=draft.segments,
+            ring_state=updated_ring_state,
+            collaborators=draft.collaborators,
+            pending_invites=draft.pending_invites,
+            created_at=draft.created_at,
+            updated_at=now,
+            target_publish_at=draft.target_publish_at,
+        )
 
-    # Store updated draft and ring pass
-    if persistence:
-        persistence.pass_ring(draft_id, from_user_id, request.to_user_id, now)
-        persistence.record_idempotency(request.idempotency_key, scope="collab")
-        # Update draft in DB
-        persistence.update_draft(updated_draft)
-        # Reload draft to get updated state
-        updated_draft = persistence.get_draft(draft_id)
-    else:
-        _drafts_store[draft_id] = updated_draft
-        _idempotency_keys.add(request.idempotency_key)
+        # Store updated draft and ring pass
+        if persistence:
+            persistence.pass_ring(draft_id, from_user_id, request.to_user_id, now)
+            persistence.record_idempotency(request.idempotency_key, scope="collab")
+            # Update draft in DB
+            persistence.update_draft(updated_draft)
+            # Reload draft to get updated state
+            updated_draft = persistence.get_draft(draft_id)
+        else:
+            _drafts_store[draft_id] = updated_draft
+            _idempotency_keys.add(request.idempotency_key)
 
-    record_audit_event(
-        action="collab.pass_ring",
-        user_id=from_user_id,
-        draft_id=draft_id,
-        request_id=get_request_id(),
-        metadata={
-            "to_user_id": request.to_user_id,
-            "idempotency_key": request.idempotency_key,
-        },
-    )
+        record_audit_event(
+            action="collab.pass_ring",
+            user_id=from_user_id,
+            draft_id=draft_id,
+            request_id=get_request_id(),
+            metadata={
+                "to_user_id": request.to_user_id,
+                "idempotency_key": request.idempotency_key,
+            },
+        )
 
-    # Emit event
-    emit_event(
-        "collab.ring_passed",
-        {
-            "draft_id": draft_id,
-            "from_user_id": from_user_id,
-            "to_user_id": request.to_user_id,
-            "passed_at": now.isoformat(),
-        },
-    )
+        # Emit event
+        emit_event(
+            "collab.ring_passed",
+            {
+                "draft_id": draft_id,
+                "from_user_id": from_user_id,
+                "to_user_id": request.to_user_id,
+                "passed_at": now.isoformat(),
+            },
+        )
 
-    return updated_draft
+        collab_mutations_total.inc(labels={"type": "pass_ring"})
+
+        return updated_draft
 
 
 def add_collaborator(draft_id: str, creator_user_id: str, collaborator_id: str, role: str = "contributor") -> CollabDraft:
@@ -578,39 +608,49 @@ def add_collaborator(draft_id: str, creator_user_id: str, collaborator_id: str, 
     # Only creator can add collaborators
     if draft.creator_id != creator_user_id:
         raise PermissionError(f"Only draft creator can add collaborators")
-    
-    # Add via persistence
-    persistence = _get_persistence()
-    if persistence:
-        persistence.add_collaborator(draft_id, collaborator_id, role)
-        # Reload draft to get updated collaborators
-        draft = persistence.get_draft(draft_id)
-    else:
-        # In-memory fallback
-        pass
 
-    record_audit_event(
-        action="collab.add_collaborator",
-        user_id=creator_user_id,
-        draft_id=draft_id,
-        request_id=get_request_id(),
-        metadata={
-            "collaborator_id": collaborator_id,
-            "role": role,
-        },
-    )
+    if settings.MAX_COLLABORATORS_PER_DRAFT and settings.MAX_COLLABORATORS_PER_DRAFT > 0:
+        if len(draft.collaborators) >= settings.MAX_COLLABORATORS_PER_DRAFT:
+            raise LimitExceededError(
+                f"Collaborator cap reached for draft {draft_id}",
+                request_id=get_request_id(),
+            )
     
-    # Emit event
-    emit_event(
-        "collab.collaborator_added",
-        {
-            "draft_id": draft_id,
-            "collaborator_id": collaborator_id,
-            "role": role,
-        },
-    )
-    
-    return draft
+    with start_span("collab.add_collaborator", {"draft_id": draft_id, "creator_user_id": creator_user_id, "collaborator_id": collaborator_id}):
+        # Add via persistence
+        persistence = _get_persistence()
+        if persistence:
+            persistence.add_collaborator(draft_id, collaborator_id, role)
+            # Reload draft to get updated collaborators
+            draft = persistence.get_draft(draft_id)
+        else:
+            # In-memory fallback
+            pass
+
+        record_audit_event(
+            action="collab.add_collaborator",
+            user_id=creator_user_id,
+            draft_id=draft_id,
+            request_id=get_request_id(),
+            metadata={
+                "collaborator_id": collaborator_id,
+                "role": role,
+            },
+        )
+        
+        # Emit event
+        emit_event(
+            "collab.collaborator_added",
+            {
+                "draft_id": draft_id,
+                "collaborator_id": collaborator_id,
+                "role": role,
+            },
+        )
+
+        collab_mutations_total.inc(labels={"type": "add_collaborator"})
+        
+        return draft
 
 
 def generate_share_card(draft_id: str, now: Optional[datetime] = None) -> dict:
