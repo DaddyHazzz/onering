@@ -209,3 +209,12 @@
 - **What to work on:** [.ai/TASKS.md](.ai/TASKS.md)
 - **Why a design:** [.ai/DECISIONS.md](.ai/DECISIONS.md)
 - **How to test:** [.ai/TESTING.md](.ai/TESTING.md)
+
+---
+
+## Next Session Start Checklist
+
+- Review [.ai/HANDOFF_PACK/README.md](HANDOFF_PACK/README.md) and scan 20 docs
+- Confirm hooks are disabled by default; enable only with `ONERING_HOOKS=1` and `ONERING_GATE=docs`
+- Docs-only changes: run `pnpm gate --mode docs` before commit
+- One commit max; no push unless explicitly requested

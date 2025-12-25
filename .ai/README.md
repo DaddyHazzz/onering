@@ -19,6 +19,7 @@
 | **Agent system** | [AGENTS_OVERVIEW.md](AGENTS_OVERVIEW.md) | Strategy, Research, Writer, QA agents + more |
 | **Agent tasks** | [TASKS.md](TASKS.md) | Fast tasks vs. agent delegations |
 | **Agent template** | [AGENT_BRIEF.md](AGENT_BRIEF.md) | How to brief a background agent |
+| **Session handoff** | [HANDOFF_PACK/README.md](HANDOFF_PACK/README.md) | 20 critical docs to start sessions |
 
 ## Structure
 
