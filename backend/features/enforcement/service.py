@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -14,11 +15,13 @@ from backend.features.enforcement.contracts import (
     AgentContractMeta,
     DraftContent,
     EvidenceBundle,
+    EnforcementReceipt,
     FormatMetadata,
     PostingDecision,
     QADecision,
     StrategyPlan,
     CONTRACT_VERSION,
+    QA_AGENT_NAME,
     stable_hash,
 )
 
@@ -51,6 +54,7 @@ class EnforcementResult:
     mode: str
     decisions: List[EnforcementDecisionSummary]
     qa_summary: Dict[str, object]
+    receipt: Optional[EnforcementReceipt]
     would_block: bool
     required_edits: List[str]
     audit_ok: bool
@@ -177,6 +181,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
             mode=mode,
             decisions=[],
             qa_summary={},
+            receipt=None,
             would_block=False,
             required_edits=[],
             audit_ok=True,
@@ -320,22 +325,42 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
             risk_score=max(qa.risk_score, 0.9),
         )
     finished = _now()
+    qa_decision_hash = stable_hash(qa.model_dump(mode="json"))
+    receipt = EnforcementReceipt(
+        receipt_id=str(uuid4()),
+        request_id=request.request_id,
+        draft_id=request.draft_id,
+        ring_id=request.ring_id,
+        turn_id=request.turn_id,
+        qa_status=qa.status,
+        qa_decision_hash=qa_decision_hash,
+        policy_version=policy.POLICY_VERSION,
+        created_at=finished,
+        expires_at=finished + timedelta(hours=24),
+    )
+
     qa_meta = _agent_meta(
-        agent_name="QA",
+        agent_name=QA_AGENT_NAME,
         agent_version="v1",
         model_name="deterministic",
         model_version="10.1",
         prompt=request.prompt,
         input_payload={"draft": draft.model_dump(mode="json"), "evidence": evidence.model_dump(mode="json")},
-        output_payload=qa.model_dump(mode="json"),
+        output_payload={"qa": qa.model_dump(mode="json"), "receipt": receipt.model_dump(mode="json")},
         request=request,
         started_at=started,
         finished_at=finished,
     )
-    audit_records.append(_decision_record(qa_meta, qa.model_dump(mode="json"), "pass" if qa.status == "PASS" else "fail"))
+    audit_records.append(
+        _decision_record(
+            qa_meta,
+            {"qa": qa.model_dump(mode="json"), "receipt": receipt.model_dump(mode="json")},
+            "pass" if qa.status == "PASS" else "fail",
+        )
+    )
     decisions.append(
         EnforcementDecisionSummary(
-            agent_name="QA",
+            agent_name=QA_AGENT_NAME,
             status=qa.status.lower(),
             violation_codes=qa.violation_codes,
             required_edits=qa.required_edits,
@@ -417,6 +442,7 @@ def run_enforcement_pipeline(request: EnforcementRequest) -> EnforcementResult:
         mode=mode,
         decisions=decisions,
         qa_summary=qa_summary,
+        receipt=receipt,
         would_block=would_block,
         required_edits=required_edits,
         audit_ok=audit_ok,

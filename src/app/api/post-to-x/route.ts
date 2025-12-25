@@ -27,6 +27,8 @@ const enforcementSchema = z
 const schema = z.object({
   content: z.string().min(1),
   enforcement: enforcementSchema,
+  enforcement_request_id: z.string().min(1).optional(),
+  enforcement_receipt_id: z.string().min(1).optional(),
 });
 
 const success = (payload: Record<string, unknown>, status = 200) =>
@@ -36,6 +38,32 @@ const failure = (error: string, status = 500, extra: Record<string, unknown> = {
   Response.json({ success: false, error, ...extra }, { status });
 
 const ENFORCEMENT_MODE = process.env.ONERING_ENFORCEMENT_MODE || "off";
+
+async function validateEnforcementReceipt(
+  requestId?: string,
+  receiptId?: string
+): Promise<
+  | { ok: true; receipt: { qa_status: "PASS" | "FAIL" } }
+  | { ok: false; code: string; message: string }
+> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/v1/enforcement/receipts/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_id: requestId,
+        receipt_id: receiptId,
+      }),
+    });
+    const payload = await res.json();
+    if (!payload?.ok) {
+      return { ok: false, code: payload?.code || "RECEIPT_INVALID", message: payload?.message || "Invalid receipt" };
+    }
+    return { ok: true, receipt: payload.receipt };
+  } catch (error: any) {
+    return { ok: false, code: "RECEIPT_LOOKUP_FAILED", message: error?.message || "Receipt lookup failed" };
+  }
+}
 
 let _redis: Redis | null = null;
 function getRedis(): Redis {
@@ -109,37 +137,59 @@ export async function POST(req: NextRequest) {
       return failure("Not authenticated", 401);
     }
 
+    const body = await req.json();
+    const { content, enforcement, enforcement_request_id, enforcement_receipt_id } = schema.parse(body);
+    const enforcementWarnings: string[] = [];
+
+    if (ENFORCEMENT_MODE !== "off") {
+      const receiptId = enforcement_receipt_id;
+      const requestId = enforcement_request_id;
+
+      if (!receiptId && !requestId) {
+        if (ENFORCEMENT_MODE === "enforced") {
+          return failure("Enforcement receipt required", 400, {
+            code: "ENFORCEMENT_RECEIPT_REQUIRED",
+            suggestedFix: "Regenerate content with enforcement enabled and pass enforcement_request_id to posting.",
+            details: { enforcement_request_id: null, enforcement_receipt_id: null },
+          });
+        }
+        enforcementWarnings.push("ENFORCEMENT_RECEIPT_MISSING");
+      } else {
+        const receiptCheck = await validateEnforcementReceipt(requestId, receiptId);
+        if (!receiptCheck.ok) {
+          if (ENFORCEMENT_MODE === "enforced") {
+            return failure("Enforcement receipt invalid", 403, {
+              code: "ENFORCEMENT_RECEIPT_INVALID",
+              suggestedFix: "Regenerate content with enforcement enabled and pass a valid enforcement_request_id.",
+              details: { reason: receiptCheck.code, message: receiptCheck.message },
+            });
+          }
+          enforcementWarnings.push("ENFORCEMENT_RECEIPT_INVALID");
+        } else if (receiptCheck.receipt.qa_status !== "PASS") {
+          if (ENFORCEMENT_MODE === "enforced") {
+            return failure("QA blocked publishing", 403, {
+              code: "QA_BLOCKED",
+              suggestedFix: "Resolve required edits and regenerate content through the enforcement pipeline.",
+              details: {
+                qa_status: receiptCheck.receipt.qa_status,
+              },
+            });
+          }
+          enforcementWarnings.push("QA_FAILED");
+        }
+      }
+    }
+
     const rateLimitCheck = await checkRateLimit(userId);
     if (!rateLimitCheck.allowed) {
       return failure("Rate limit exceeded. Maximum 5 posts per hour.", 429, {
         retryAfter: rateLimitCheck.retryAfter,
+        ...(enforcementWarnings.length ? { warnings: enforcementWarnings } : {}),
       });
     }
 
-    const body = await req.json();
-    const { content, enforcement } = schema.parse(body);
-
-    if (ENFORCEMENT_MODE === "enforced") {
-      if (enforcement?.audit_ok === false) {
-        return failure("Audit log write failed", 503, {
-          code: "AUDIT_WRITE_FAILED",
-          suggestedFix: "Retry once audit storage is available or switch to advisory mode.",
-          details: {
-            audit_ok: false,
-          },
-        });
-      }
-      const qaStatus = enforcement?.qa_summary?.status;
-      if (qaStatus !== "PASS") {
-        return failure("QA blocked publishing", 403, {
-          code: "QA_BLOCKED",
-          suggestedFix: "Resolve required edits and regenerate content through the enforcement pipeline.",
-          details: {
-            required_edits: enforcement?.required_edits || [],
-            violation_codes: enforcement?.qa_summary?.violation_codes || [],
-          },
-        });
-      }
+    if (ENFORCEMENT_MODE === "advisory" && enforcementWarnings.length) {
+      console.warn("[post-to-x] enforcement warnings:", enforcementWarnings);
     }
 
     // Verify credentials exist
@@ -147,7 +197,8 @@ export async function POST(req: NextRequest) {
       console.error("[post-to-x] missing Twitter credentials in environment");
       return failure(
         "Twitter credentials not configured. Add TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET to .env.local",
-        500
+        500,
+        enforcementWarnings.length ? { warnings: enforcementWarnings } : {}
       );
     }
 
@@ -343,7 +394,11 @@ export async function POST(req: NextRequest) {
       console.error("[post-to-x] failed to write to database:", dbErr);
     }
 
-    return success({ url, remaining: rateLimitCheck.remaining });
+    return success({
+      url,
+      remaining: rateLimitCheck.remaining,
+      ...(enforcementWarnings.length ? { warnings: enforcementWarnings } : {}),
+    });
   } catch (error: any) {
     console.error("[post-to-x] X post failed:", error);
     return failure(error.message || "Failed to post to X", 500);

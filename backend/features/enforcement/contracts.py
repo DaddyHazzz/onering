@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 CONTRACT_VERSION = "10.1"
+QA_AGENT_NAME = "qa_gatekeeper"
 
 
 def stable_hash(value: object) -> str:
@@ -90,6 +91,21 @@ class QADecision(BaseModel):
     violation_codes: List[str]
     required_edits: List[str]
     risk_score: float = Field(ge=0.0, le=1.0)
+
+
+class EnforcementReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: str
+    request_id: Optional[str] = None
+    draft_id: Optional[str] = None
+    ring_id: Optional[str] = None
+    turn_id: Optional[str] = None
+    qa_status: Literal["PASS", "FAIL"]
+    qa_decision_hash: str
+    policy_version: str
+    created_at: datetime
+    expires_at: Optional[datetime] = None
 
 
 class PostingDecision(BaseModel):

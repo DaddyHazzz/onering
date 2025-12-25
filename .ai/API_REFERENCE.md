@@ -100,7 +100,7 @@ Invariants:
   - Body: { prompt: string, userId: string }
   - Returns: SSE stream of tokens
   - Optional (Phase 10.1): when enforcement enabled, a final SSE event `event: enforcement`
-    includes `{ request_id, mode, decisions, qa_summary, would_block, required_edits, audit_ok }`.
+    includes `{ request_id, mode, receipt, decisions, qa_summary, would_block, required_edits, audit_ok }`.
   - Non-streaming responses include optional `enforcement` field with the same shape.
 
 ### Enforcement Metadata (Phase 10.1)
@@ -121,6 +121,58 @@ Optional metadata may be attached to generation responses (non-breaking). In adv
 Backward compatibility guarantees:
 - Field is optional; omission means enforcement disabled.
 - Existing streaming token contract remains unchanged; metadata may be sent as initial JSON envelope or terminal summary event (implementation detail).
+
+### Phase 10.1 Enforcement (Canonical)
+
+- **Flags (canonical names + defaults):**
+  - `ONERING_ENFORCEMENT_MODE`: `off` (default) | `advisory` | `enforced`
+  - `ONERING_AUDIT_LOG`: `"1"` (default enabled; `"0"` disables writes)
+  - `ONERING_TOKEN_ISSUANCE`: `off` (default) | `shadow` | `live` (shadow only in 10.1)
+- **Mode effects:**
+  - `off`: Generation/posting unchanged; no enforcement payloads emitted; posting does not require receipts.
+  - `advisory`: Generation emits SSE `event: enforcement` and non-streaming `enforcement` payload; `would_block` is informational only; posting accepts/ignores payload.
+  - `enforced`: Generation emits enforcement payload; posting MUST validate server-side QA receipt (request_id + decision/workflow IDs) and may block on QA/Audit failure.
+- **Generation SSE canonical payload (`event: enforcement`):**
+  - Required fields: `request_id` (string|null), `mode` ("off"|"advisory"|"enforced"), `decisions` (array), `qa_summary` (object), `would_block` (bool), `required_edits` (array), `audit_ok` (bool)
+  - Optional fields: `warnings` (array of strings)
+  - Decision entry: `{ agent_name: string, status: "PASS"|"FAIL", violation_codes: string[], required_edits: string[], decision_id: string }`
+  - QA summary: `{ status: "PASS"|"FAIL", violation_codes: string[], risk_score: number }`
+  - **Status casing:** canonical `PASS` / `FAIL` (uppercase) everywhere (decisions + qa_summary) for clients.
+- **Canonical enforcement error taxonomy (response error shape):**
+  ```json
+  {
+    "error": {
+      "code": "QA_BLOCKED",
+      "message": "QA rejected content",
+      "suggestedFix": "Resolve required edits and regenerate",
+      "details": {"violation_codes": ["NUMBERING_NOT_ALLOWED"], "required_edits": ["Remove numbering"], "request_id": "..."}
+    }
+  }
+  ```
+  - Codes: `QA_BLOCKED`, `ENFORCEMENT_RECEIPT_REQUIRED`, `AUDIT_WRITE_FAILED`, `POLICY_ERROR`, `ENFORCEMENT_DISABLED`, `RATE_LIMITED`, `CIRCUIT_BREAKER_TRIPPED`.
+- **SSE example (advisory):**
+  ```
+  event: enforcement
+  data: {"request_id":"req-123","mode":"advisory","decisions":[{"agent_name":"QA","status":"PASS","violation_codes":[],"required_edits":[],"decision_id":"hash123"}],"qa_summary":{"status":"PASS","violation_codes":[],"risk_score":0.1},"would_block":false,"required_edits":[],"audit_ok":true,"warnings":[]}
+  ```
+- **Posting failure example (enforced):**
+  ```json
+  {
+    "success": false,
+    "error": "QA blocked publishing",
+    "code": "QA_BLOCKED",
+    "suggestedFix": "Resolve required edits and regenerate content through the enforcement pipeline.",
+    "details": {
+      "required_edits": ["Remove numbering", "Shorten line 1"],
+      "violation_codes": ["NUMBERING_NOT_ALLOWED"],
+      "request_id": "req-123"
+    }
+  }
+  ```
+- **Backward compatibility guarantees:**
+  - `off` mode behavior is unchanged (no enforcement payloads required or emitted).
+  - All new fields are optional; clients may ignore them safely in `off`/`advisory` modes.
+  - `enforced` mode requires a valid QA receipt (request_id + QA PASS + audit_ok=true) for posting; failures use the canonical error taxonomy.
 
 ### Enforcement Failure Error Shape
 
@@ -166,7 +218,16 @@ Notes:
   - Splits on newlines; chains replies; rate-limited 5 per 15m
   - Returns: { urls: string[] }
   - Optional (Phase 10.1): accepts `enforcement` payload from generation; enforced mode
-    blocks publishing unless `enforcement.qa_summary.status === "PASS"`.
+    blocks publishing unless a valid QA receipt is provided.
+  - Enforced mode requires one of:
+    - `enforcement_request_id` (request_id returned in enforcement metadata)
+    - `enforcement_receipt_id` (receipt.receipt_id returned in enforcement metadata)
+
+## Enforcement (internal)
+
+- POST /v1/enforcement/receipts/validate
+  - Body: { request_id?: string, receipt_id?: string }
+  - Returns: { ok: true, receipt } or { ok: false, code, message }
 
 Notes:
 - All time-based endpoints accept optional `now` for deterministic tests.

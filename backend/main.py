@@ -39,7 +39,7 @@ try:
     from backend.core.middleware.ratelimit import RateLimitMiddleware
     from backend.core.ratelimit import build_rate_limit_config_from_env
     from backend.core.tracing import setup_tracing
-    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode, insights
+    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode, insights, enforcement
     from backend.agents.viral_thread import generate_viral_thread
     from backend.features.enforcement.service import EnforcementRequest, run_enforcement_pipeline, get_enforcement_mode
     import groq
@@ -122,6 +122,7 @@ app.include_router(metrics.router, tags=["metrics"])
 app.include_router(billing.router, prefix="/api", tags=["billing"])
 app.include_router(admin_billing.router, tags=["admin-billing"])
 app.include_router(ai.router, tags=["ai"])
+app.include_router(enforcement.router, tags=["enforcement"])
 app.include_router(format_api.router, tags=["format"])
 app.include_router(timeline.router, tags=["timeline"])
 app.include_router(export_api.router, tags=["export"])
@@ -300,6 +301,7 @@ async def generate_content(body: GenerateRequest, request: Request):
             enforcement_payload = {
                 "request_id": result.request_id,
                 "mode": result.mode,
+                "receipt": result.receipt.model_dump(mode="json") if result.receipt else None,
                 "decisions": [
                     {
                         "agent_name": d.agent_name,
@@ -350,6 +352,7 @@ async def generate_content(body: GenerateRequest, request: Request):
         "enforcement": {
             "request_id": enforcement_result.request_id,
             "mode": enforcement_result.mode,
+            "receipt": enforcement_result.receipt.model_dump(mode="json") if enforcement_result.receipt else None,
             "decisions": [
                 {
                     "agent_name": d.agent_name,
