@@ -1,22 +1,39 @@
 #!/usr/bin/env bash
-# Safety: default to fast gate; docs mode skips; full only when ONERING_GATE=full. Tests never run directly here.
+# Safety: hooks are opt-in. If ONERING_GATE is unset, skip. Set ONERING_HOOKS=0 to disable. No direct test commands here.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-MODE="${ONERING_GATE:-fast}"
-
-if [[ "$MODE" == "docs" ]]; then
-	echo "[pre-commit] DOCS mode: skipping automated tests."
+if [[ "${ONERING_HOOKS:-1}" == "0" ]]; then
+	echo "[pre-commit] Hooks disabled via ONERING_HOOKS=0; skipping."
 	exit 0
 fi
 
-if [[ "$MODE" != "fast" && "$MODE" != "full" ]]; then
-	echo "[pre-commit] Unknown ONERING_GATE='$MODE'. Use fast|full|docs."
-	exit 1
+MODE="${ONERING_GATE:-}"
+
+if [[ -z "$MODE" ]]; then
+	echo "[pre-commit] ONERING_GATE not set; skipping tests."
+	exit 0
 fi
 
-echo "[pre-commit] Running gate (mode=$MODE)..."
-pnpm gate -- --mode "$MODE"
+case "$MODE" in
+	docs)
+		echo "[pre-commit] DOCS mode: running docs gate (no tests)."
+		pnpm gate -- --mode docs
+		;;
+	fast)
+		echo "[pre-commit] FAST mode: running changed-only gate."
+		pnpm gate -- --mode fast
+		;;
+	full)
+		echo "[pre-commit] FULL mode: running full gate."
+		pnpm gate -- --mode full
+		;;
+	*)
+		echo "[pre-commit] Unknown ONERING_GATE='$MODE'. Use docs|fast|full."
+		exit 1
+		;;
+esac
+
 exit $?
