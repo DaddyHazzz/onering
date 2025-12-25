@@ -1,7 +1,7 @@
 # Project State (Canonical)
 
 **Last Updated:** December 25, 2025  
-**Status:** Phase 8.7.1b COMPLETE. Phase 8.8 IN PROGRESS (Docs consolidation + fast gates).
+**Status:** Phase 8.8 COMPLETE. All tests passing (617 backend + 388 frontend = 1005 total).
 
 ## Test Coverage
 
@@ -13,41 +13,54 @@
 | Skipped | 0 | ✅ ZERO |
 | --no-verify bypasses | 0 | ✅ ZERO |
 
-**Last Full Run:** December 25, 2025 @ 10:00 UTC  
+**Last Full Run:** December 25, 2025 @ 11:30 UTC  
 **Duration:** ~2.5 minutes (sequential: backend ~2 min + frontend ~8 sec)
 
 ## Current Phase Status
 
-### ✅ Phase 8.7.1b: LONG_RING_HOLD Alert Fix
+### ✅ Phase 8.8: Docs Consolidation + Fast Gates + Agent Workflow
 **Shipped:** December 25, 2025  
-**Commit:** `c405a29` (fix), `6d72fa4` (docs)
+**Commit:** `018b721`
 
-**Problem:** Alert computed from average hold time (None with zero ring passes) → edge case failed.  
-**Solution:** Use current holder's actual hold time from `ring_state.passed_at`.  
-**Impact:** Catches stuck drafts even when ring never passed.
+**Parts Completed:**
 
-**Test Results:**
-- `test_alerts_no_activity_and_long_hold` — now PASSING
-- All 6 insights API tests green
-- No test weakening, no assertions deleted
+**Part A: Canonical Documentation to .ai/**
+- Created .ai/README.md — index and navigation
+- Created .ai/PROJECT_CONTEXT.md — what OneRing is, non-goals, stack, metrics
+- Created .ai/ARCHITECTURE.md — detailed system design
+- Created .ai/API_REFERENCE.md — endpoints, contracts, invariants
+- Created .ai/TESTING.md — fast vs full gates, troubleshooting, patterns
+- Created .ai/DECISIONS.md — architecture constraints and patterns
+- Created .ai/PROJECT_STATE.md — this file, current status and counts
+- Created .ai/CONTRIBUTIONS.md — contributor checklist
+- Created .ai/PHASES/PHASE_8.md — Phase 8 rollup with shipped items, endpoints, invariants, testing guidance
+- Created .ai/PHASES/ directory for phase organization
+- Updated root README.md with banner pointing to .ai/ index
+- Updated legacy /docs/ files with move notices (API_REFERENCE.md, ARCHITECTURE.md)
 
-### ⏳ Phase 8.8: Docs Consolidation + Fast Gates + Agent Workflow
-**Status:** IN PROGRESS  
-**Target:** December 25, 2025 (today)
+**Part B: Windows-Friendly Fast-Lane Testing**
+- Created scripts/test_changed.py — Python helper to map changed files to backend/frontend tests
+- Created scripts/vitest-changed.ps1 — PowerShell script to run changed-only vitest tests
+- Created scripts/gate.ps1 — Two-stage gate: fast (changed-only) vs full (-Full flag)
+- Extended package.json scripts:
+  - `test:api` — Run backend tests
+  - `test:api:changed` — Run only tests for changed backend files
+  - `test:ui:changed` — Run only tests for changed frontend files
+  - `gate` — Two-stage gate entry point (Windows-friendly)
 
-**Parts:**
-- A (DOCS): Consolidate into `.ai/` → IN PROGRESS
-- B (GATES): Add fast/full gate scripts → PENDING
-- C (AGENTS): Add briefs + task templates → PENDING
+**Part C: Agent Workflow Templates**
+- Created .github/ISSUE_TEMPLATE/agent_tasks.md — Issue template for delegating agent tasks
+- Created .ai/TASKS.md — Task conventions (fast-lane vs agent, definition of done)
+- Created .ai/AGENT_BRIEF.md — Delegation brief template (objective, context, deliverables, acceptance, non-negotiables, reporting)
+- Updated .github/copilot-instructions.md — Copilot/Grok/ChatGPT guidance with reference to .ai/ docs and new gate commands
 
----
+**Impact:**
+- Single source of truth for all documentation (live under .ai/)
+- Fast test feedback loops for small changes (changed-only gates)
+- Clear templates for delegating tasks to AI agents
+- Reduced ambiguity in project state and decision history
 
-## Code Snapshot
-
-### Backend
-**Language:** Python 3.10+  
-**Key Files:**
-- `backend/main.py` — FastAPI app
+### ✅ Phase 8.7.1b: LONG_RING_HOLD Alert Fix (Dec 14, 2025)
 - `backend/features/collaboration/service.py` — Draft + ring logic
 - `backend/features/insights/service.py` — Insights engine (deterministic, threshold-based)
 - `backend/features/analytics/service.py` — Event reducers
