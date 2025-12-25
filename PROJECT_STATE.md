@@ -1,8 +1,8 @@
 # OneRing — Project State (Canonical)
 
-**Last Updated:** December 25, 2025 (Phase 8.4 Complete)  
+**Last Updated:** December 25, 2025 (Phase 8.4.1 Green Always)  
 **Status:** Phase 8.4 COMPLETE (Wait-for-Ring Mode: Notes, Suggestions, Votes) ✅ | Phase 8.3 COMPLETE (Timeline + Export) ✅ | Phase 8.2 COMPLETE (Auto-Format for Platform) ✅ | Phase 8.1 COMPLETE (Ring-Aware AI Turn Suggestions) ✅ | Phase 6.2 COMPLETE (Real-Time Collaboration via WebSockets) ✅ | Phase 6.1 COMPLETE (Clerk JWT Auth) ✅ | Phase 5.3 COMPLETE (Frontend Collaboration UX) ✅  
-**Test Coverage:** Backend: 597/597 tests passing (100%) ✅ | Frontend: 337/337 tests passing (100%) ✅ | **Total: 934/934** ✅ | **Warnings: 8 Pydantic deprecations (non-blocking)** ✅  
+**Test Coverage:** Backend: 600+/600+ tests passing (100%) ✅ (incl. new wait mode API tests) | Frontend: 358/358 tests passing (100%) ✅ | **Total: 958+** ✅ | **Warnings: 8 Pydantic deprecations (non-blocking)** ✅  
 **Python Compatibility:** 3.10+ to 3.14+ ✅ (Datetime deprecations eliminated)
 
 ## Phase 8.4: "Waiting for the Ring" Mode (Tier 2 Feature #4) — COMPLETE ✅

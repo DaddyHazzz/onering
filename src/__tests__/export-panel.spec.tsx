@@ -263,9 +263,29 @@ describe("ExportPanel", () => {
       download: "",
       click: vi.fn(),
     };
-    const createElementSpy = vi.spyOn(document, "createElement").mockReturnValue(mockLink as any);
-    const appendChildSpy = vi.spyOn(document.body, "appendChild").mockImplementation(() => mockLink as any);
-    const removeChildSpy = vi.spyOn(document.body, "removeChild").mockImplementation(() => mockLink as any);
+    const originalCreateElement = document.createElement.bind(document);
+    const originalAppendChild = document.body.appendChild.bind(document.body);
+    const originalRemoveChild = document.body.removeChild.bind(document.body);
+
+    const createElementSpy = vi
+      .spyOn(document, "createElement")
+      .mockImplementation(((tagName: any) => {
+        return tagName === "a" ? (mockLink as any) : originalCreateElement(tagName);
+      }) as any);
+
+    const appendChildSpy = vi
+      .spyOn(document.body, "appendChild")
+      .mockImplementation(((node: any) => {
+        if (node === (mockLink as any)) return node as any;
+        return originalAppendChild(node);
+      }) as any);
+
+    const removeChildSpy = vi
+      .spyOn(document.body, "removeChild")
+      .mockImplementation(((node: any) => {
+        if (node === (mockLink as any)) return node as any;
+        return originalRemoveChild(node);
+      }) as any);
 
     render(
       <ExportPanel

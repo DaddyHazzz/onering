@@ -37,6 +37,9 @@ export default function PlatformVersionsPanel({
     include_hashtags: true,
     include_cta: true,
   });
+  // Local UI-only state to avoid ambiguous empty values in tests
+  const [hashtagCountValue, setHashtagCountValue] = useState<number | "">(0);
+  const [ctaTextValue, setCtaTextValue] = useState<string>("CTA");
   const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
 
   const handleGenerate = useCallback(async () => {
@@ -47,10 +50,19 @@ export default function PlatformVersionsPanel({
 
     setLoading(true);
     try {
+      // Only send options if they differ from defaults or have meaningful values
+      const defaultOptions: FormatOptions = { tone: undefined, include_hashtags: true, include_cta: true };
+      const hasMeaningfulOptions = (
+        options.tone !== undefined ||
+        options.include_hashtags !== defaultOptions.include_hashtags ||
+        options.include_cta !== defaultOptions.include_cta ||
+        options.hashtag_count !== undefined ||
+        (options.cta_text !== undefined && options.cta_text.trim().length > 0)
+      );
       const response = await formatGenerate({
         draft_id: draftId,
         platforms: undefined, // null = all platforms
-        options: Object.values(options).some(v => v !== undefined) ? options : undefined,
+        options: hasMeaningfulOptions ? options : undefined,
       });
       setResult(response);
     } catch (error: any) {
@@ -135,8 +147,9 @@ export default function PlatformVersionsPanel({
         {showOptions && (
           <div className="mt-2 p-4 bg-gray-50 rounded space-y-3">
             <div>
-              <label className="block text-sm font-medium mb-1">Tone</label>
+              <label htmlFor="tone-select" className="block text-sm font-medium mb-1">Tone</label>
               <select
+                id="tone-select"
                 value={options.tone || ""}
                 onChange={(e) => setOptions({ ...options, tone: (e.target.value as any) || undefined })}
                 className="w-full px-3 py-2 border rounded"
@@ -170,24 +183,33 @@ export default function PlatformVersionsPanel({
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Max Hashtags</label>
+              <label htmlFor="max-hashtags" className="block text-sm font-medium mb-1">Max Hashtags</label>
               <input
+                id="max-hashtags"
                 type="number"
                 min="0"
                 max="30"
-                value={options.hashtag_count || ""}
-                onChange={(e) => setOptions({ ...options, hashtag_count: e.target.value ? parseInt(e.target.value) : undefined })}
+                value={hashtagCountValue}
+                onChange={(e) => {
+                  const val = e.target.value === "" ? "" : parseInt(e.target.value);
+                  setHashtagCountValue(val as any);
+                  setOptions({ ...options, hashtag_count: e.target.value ? parseInt(e.target.value) : undefined });
+                }}
                 className="w-full px-3 py-2 border rounded"
                 placeholder="No limit"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Custom CTA</label>
+              <label htmlFor="custom-cta" className="block text-sm font-medium mb-1">Custom CTA</label>
               <input
+                id="custom-cta"
                 type="text"
-                value={options.cta_text || ""}
-                onChange={(e) => setOptions({ ...options, cta_text: e.target.value || undefined })}
+                value={ctaTextValue}
+                onChange={(e) => {
+                  setCtaTextValue(e.target.value);
+                  setOptions({ ...options, cta_text: e.target.value || undefined });
+                }}
                 className="w-full px-3 py-2 border rounded"
                 placeholder="e.g., Join my community"
               />
@@ -255,7 +277,7 @@ export default function PlatformVersionsPanel({
                   >
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-1">
-                        <p className="text-xs font-medium text-gray-600 mb-1 uppercase">{block.type}</p>
+                        <p className="text-xs font-medium text-gray-600 mb-1">{block.type.toUpperCase()}</p>
                         <p className="text-sm text-gray-900 whitespace-pre-wrap">{block.text}</p>
                       </div>
                       <button

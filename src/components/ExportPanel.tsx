@@ -151,7 +151,7 @@ export default function ExportPanel({
           {exporting ? (
             <span className="flex items-center justify-center">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-600 border-t-transparent mr-2"></div>
-              Exporting...
+              Please wait...
             </span>
           ) : (
             <>

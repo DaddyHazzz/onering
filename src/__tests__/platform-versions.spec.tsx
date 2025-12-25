@@ -281,7 +281,7 @@ describe("PlatformVersionsPanel", () => {
 
       fireEvent.click(screen.getByText("Show Formatting Options"));
 
-      const toneSelect = screen.getByDisplayValue("");
+      const toneSelect = screen.getByLabelText("Tone");
       fireEvent.change(toneSelect, { target: { value: "professional" } });
 
       fireEvent.click(screen.getByRole("button", { name: /Generate All Platforms/i }));
