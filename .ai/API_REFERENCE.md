@@ -104,6 +104,10 @@ Invariants:
   - `qa_summary.status` is canonicalized as `PASS` or `FAIL`.
   - Non-streaming responses include optional `enforcement` field with the same shape.
 
+**Client Responsibilities (Phase 10.1):**
+- If `enforcement.mode` is not `off`, persist `enforcement.request_id` and `enforcement.receipt.receipt_id`.
+- When posting, include `enforcement_request_id` and/or `enforcement_receipt_id` in the request body.
+
 ### Enforcement Metadata (Phase 10.1)
 
 Optional metadata may be attached to generation responses (non-breaking). In advisory mode, content is never blocked; metadata provides visibility.

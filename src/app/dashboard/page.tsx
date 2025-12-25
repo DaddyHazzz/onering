@@ -4,6 +4,14 @@ import { UserButton, useUser } from "@clerk/nextjs";
 import { useState, useEffect } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import ArchetypeCard from "@/components/ArchetypeCard";
+import EnforcementBadge from "@/components/EnforcementBadge";
+import EnforcementErrorCallout from "@/components/EnforcementErrorCallout";
+import {
+  buildEnforcementRequestFields,
+  EnforcementPayload,
+  normalizeEnforcementPayload,
+  parseSseEvents,
+} from "@/lib/enforcement";
 
 // Make sure this is the publishable key (the pk_test_ one)
 const stripePromise = loadStripe(
@@ -38,6 +46,10 @@ export default function Dashboard() {
   const [topicForThread, setTopicForThread] = useState("");
   const [threadLines, setThreadLines] = useState<string[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [enforcementSimple, setEnforcementSimple] = useState<EnforcementPayload | null>(null);
+  const [enforcementThread, setEnforcementThread] = useState<EnforcementPayload | null>(null);
+  const [postError, setPostError] = useState<{ message?: string; suggestedFix?: string } | null>(null);
+  const [threadPostError, setThreadPostError] = useState<{ message?: string; suggestedFix?: string } | null>(null);
   const [streak, setStreak] = useState<{ current_length: number; longest_length: number; status: string; next_action_hint: string } | null>(null);
   const [loadingStreak, setLoadingStreak] = useState(false);
   const [challenge, setChallenge] = useState<{ challenge_id: string; date: string; type: string; prompt: string; status: string; next_action_hint: string } | null>(null);
@@ -201,6 +213,8 @@ export default function Dashboard() {
     if (!prompt.trim()) return;
     setLoading(true);
     setResult("");
+    setEnforcementSimple(null);
+    setPostError(null);
 
     try {
       const res = await fetch("/api/generate", {
@@ -232,20 +246,30 @@ export default function Dashboard() {
       }
 
       let fullContent = "";
+      let buffer = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-        
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const token = line.slice(6);
-            if (token && token !== "[DONE]") {
-              fullContent += token;
-              setResult(fullContent);
+
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseSseEvents(buffer);
+        buffer = parsed.rest;
+
+        for (const event of parsed.events) {
+          if (event.event === "enforcement") {
+            try {
+              const payload = normalizeEnforcementPayload(JSON.parse(event.data));
+              if (payload) setEnforcementSimple(payload);
+            } catch (err) {
+              console.error("[generate] failed to parse enforcement payload", err);
             }
+            continue;
+          }
+
+          const token = event.data.trim();
+          if (token && token !== "[DONE]") {
+            fullContent += token;
+            setResult(fullContent);
           }
         }
       }
@@ -262,6 +286,8 @@ export default function Dashboard() {
     if (!topicForThread.trim()) return;
     setLoadingThread(true);
     setThreadLines([]);
+    setEnforcementThread(null);
+    setThreadPostError(null);
 
     try {
       const res = await fetch("/api/generate", {
@@ -296,16 +322,24 @@ export default function Dashboard() {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
+        const parsed = parseSseEvents(buffer);
+        buffer = parsed.rest;
 
-        for (let i = 0; i < lines.length - 1; i++) {
-          const line = lines[i].trim();
-          if (line.startsWith("data: ")) {
-            const threadLine = line.substring(6);
+        for (const event of parsed.events) {
+          if (event.event === "enforcement") {
+            try {
+              const payload = normalizeEnforcementPayload(JSON.parse(event.data));
+              if (payload) setEnforcementThread(payload);
+            } catch (err) {
+              console.error("[thread] failed to parse enforcement payload", err);
+            }
+            continue;
+          }
+          const threadLine = event.data.trim();
+          if (threadLine) {
             setThreadLines((prev) => [...prev, threadLine]);
           }
         }
-        buffer = lines[lines.length - 1];
       }
 
       setLoadingThread(false);
@@ -413,15 +447,22 @@ export default function Dashboard() {
             <div className="mt-12 p-8 bg-black/40 rounded-2xl whitespace-pre-wrap text-xl leading-relaxed border border-purple-500">
               <strong>Generated Post:</strong>
               <pre className="mt-4 whitespace-pre-wrap font-sans">{result}</pre>
+              <EnforcementBadge enforcement={enforcementSimple} />
+              <EnforcementErrorCallout
+                message={postError?.message}
+                suggestedFix={postError?.suggestedFix}
+              />
 
               <div className="mt-6 flex flex-wrap gap-4">
                 <button
                   onClick={async () => {
                     setLoading(true);
+                    setPostError(null);
+                    const enforcementFields = buildEnforcementRequestFields(enforcementSimple);
                     const res = await fetch("/api/post-to-x", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ content: result }),
+                      body: JSON.stringify({ content: result, ...enforcementFields }),
                     });
                     const data = await res.json();
                     setLoading(false);
@@ -431,7 +472,14 @@ export default function Dashboard() {
                       await refreshStreak();
                       alert(`Posted! ${data.url}`);
                     } else {
-                      alert(`Error: ${data.error}`);
+                      const message = data.error || data.message || "Post failed";
+                      const suggestedFix =
+                        data.suggestedFix ||
+                        (data.code?.startsWith("ENFORCEMENT_")
+                          ? "Regenerate content; receipt expired; click Generate again."
+                          : undefined);
+                      setPostError({ message, suggestedFix });
+                      alert(`Error: ${message}`);
                     }
                   }}
                   disabled={loading}
@@ -529,16 +577,23 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              <EnforcementBadge enforcement={enforcementThread} />
+              <EnforcementErrorCallout
+                message={threadPostError?.message}
+                suggestedFix={threadPostError?.suggestedFix}
+              />
 
               <div className="mt-6 flex flex-wrap gap-4">
                 <button
                   onClick={async () => {
                     const threadContent = threadLines.join("\n");
                     setLoading(true);
+                    setThreadPostError(null);
+                    const enforcementFields = buildEnforcementRequestFields(enforcementThread);
                     const res = await fetch("/api/post-to-x", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ content: threadContent }),
+                      body: JSON.stringify({ content: threadContent, ...enforcementFields }),
                     });
                     const data = await res.json();
                     setLoading(false);
@@ -549,7 +604,14 @@ export default function Dashboard() {
                       await refreshStreak();
                       alert(`Posted! ${data.url}`);
                     } else {
-                      alert(`Error: ${data.error}`);
+                      const message = data.error || data.message || "Post failed";
+                      const suggestedFix =
+                        data.suggestedFix ||
+                        (data.code?.startsWith("ENFORCEMENT_")
+                          ? "Regenerate content; receipt expired; click Generate again."
+                          : undefined);
+                      setThreadPostError({ message, suggestedFix });
+                      alert(`Error: ${message}`);
                     }
                   }}
                   disabled={loading}
