@@ -143,6 +143,14 @@ Backward compatibility guarantees:
   - Decision entry: `{ agent_name: string, status: "PASS"|"FAIL", violation_codes: string[], required_edits: string[], decision_id: string }`
   - QA summary: `{ status: "PASS"|"FAIL", violation_codes: string[], risk_score: number }`
   - **Status casing:** canonical `PASS` / `FAIL` (uppercase) everywhere (decisions + qa_summary) for clients.
+- **Canonical QA violation codes (Phase 10.1):**
+  - `PROFANITY`: Content contains banned terms (word-boundary matched)
+  - `HARMFUL_CONTENT`: Self-harm or abusive language patterns
+  - `TOS_VIOLATION`: Platform-specific terms of service violations (e.g., impersonation, explicit content)
+  - `LENGTH_EXCEEDED`: Content exceeds platform character limits per line/post
+  - `NUMBERING_NOT_ALLOWED`: Leading numbering or bullets (e.g., "1/5", "Tweet 1:")
+  - `POLICY_TAGS_MISSING`: Required policy_tags field is empty
+  - `CITATIONS_REQUIRED`: Citations required but not provided
 - **Canonical enforcement error taxonomy (response error shape):**
   ```json
   {
