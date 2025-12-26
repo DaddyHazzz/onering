@@ -45,6 +45,30 @@ async function getLatestLedgerBalance(userId: string): Promise<number | null> {
   return row?.balanceAfter ?? null;
 }
 
+export async function getEffectiveRingBalance(userId: string): Promise<{
+  mode: TokenIssuanceMode;
+  balance: number;
+  pendingTotal: number;
+  effectiveBalance: number;
+}> {
+  const mode = getTokenIssuanceMode();
+  const legacyBalance = await getLegacyBalance(userId);
+
+  if (mode === "off") {
+    return { mode, balance: legacyBalance, pendingTotal: 0, effectiveBalance: legacyBalance };
+  }
+
+  if (mode === "shadow") {
+    const pendingTotal = await getPendingTotal(userId);
+    const shadowDelta = await getShadowLedgerDelta(userId);
+    const effectiveBalance = legacyBalance + pendingTotal + shadowDelta;
+    return { mode, balance: legacyBalance, pendingTotal, effectiveBalance };
+  }
+
+  const ledgerBalance = (await getLatestLedgerBalance(userId)) ?? legacyBalance;
+  return { mode, balance: ledgerBalance, pendingTotal: 0, effectiveBalance: ledgerBalance };
+}
+
 export async function applyLedgerSpend(params: {
   userId: string;
   amount: number;
