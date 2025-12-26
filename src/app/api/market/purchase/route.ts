@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { applyLedgerEarn, applyLedgerSpend, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   listingId: z.string().min(1),
@@ -56,24 +57,52 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Check buyer has enough RING
-    if (buyer.ringBalance < listing.priceRING) {
-      return Response.json(
-        { error: `Insufficient RING. Need ${listing.priceRING}, have ${buyer.ringBalance}` },
-        { status: 400 }
-      );
+    const mode = getTokenIssuanceMode();
+    if (mode === "off") {
+      // Check buyer has enough RING
+      if (buyer.ringBalance < listing.priceRING) {
+        return Response.json(
+          { error: `Insufficient RING. Need ${listing.priceRING}, have ${buyer.ringBalance}` },
+          { status: 400 }
+        );
+      }
+
+      // Deduct from buyer, credit to seller
+      await prisma.user.update({
+        where: { id: buyer.id },
+        data: { ringBalance: { decrement: listing.priceRING } },
+      });
+
+      await prisma.user.update({
+        where: { id: listing.userId },
+        data: { ringBalance: { increment: listing.priceRING } },
+      });
+    } else {
+      const spend = await applyLedgerSpend({
+        userId: buyerId,
+        amount: listing.priceRING,
+        reasonCode: "market_purchase",
+        metadata: { listing_id: listingId },
+      });
+      if (!spend.ok) {
+        return Response.json(
+          { error: "Purchase blocked", code: spend.error || "LEGACY_RING_WRITE_BLOCKED" },
+          { status: 400 }
+        );
+      }
+      const earn = await applyLedgerEarn({
+        userId: listing.user.clerkId,
+        amount: listing.priceRING,
+        reasonCode: "market_sale",
+        metadata: { listing_id: listingId },
+      });
+      if (!earn.ok) {
+        return Response.json(
+          { error: "Seller credit blocked", code: earn.error || "LEGACY_RING_WRITE_BLOCKED" },
+          { status: 400 }
+        );
+      }
     }
-
-    // Deduct from buyer, credit to seller
-    await prisma.user.update({
-      where: { id: buyer.id },
-      data: { ringBalance: { decrement: listing.priceRING } },
-    });
-
-    await prisma.user.update({
-      where: { id: listing.userId },
-      data: { ringBalance: { increment: listing.priceRING } },
-    });
 
     // Mark listing as sold
     await prisma.marketplaceListing.update({

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
+import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const claimSchema = z.object({
   stakeId: z.string().uuid(),
@@ -72,12 +73,28 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await prisma.user.update({
-      where: { id: stake.userId },
-      data: {
-        ringBalance: { increment: claimable },
-      },
-    });
+    const mode = getTokenIssuanceMode();
+    if (mode === "off") {
+      await prisma.user.update({
+        where: { id: stake.userId },
+        data: {
+          ringBalance: { increment: claimable },
+        },
+      });
+    } else {
+      const earn = await applyLedgerEarn({
+        userId,
+        amount: claimable,
+        reasonCode: "stake_yield",
+        metadata: { stake_id: stakeId },
+      });
+      if (!earn.ok) {
+        return Response.json(
+          { error: "Claim blocked", code: earn.error || "LEGACY_RING_WRITE_BLOCKED" },
+          { status: 400 }
+        );
+      }
+    }
 
     console.log(
       `[ring/stake/claim] user ${userId} claimed ${claimable} RING from stake ${stakeId}`

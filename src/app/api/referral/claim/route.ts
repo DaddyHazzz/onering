@@ -1,5 +1,6 @@
 import { currentUser, clerkClient } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/db';
+import { applyLedgerEarn, getTokenIssuanceMode } from '@/lib/ring-ledger';
 
 async function postReferralToX(referralCode: string, referrerName: string): Promise<boolean> {
   try {
@@ -60,8 +61,7 @@ export async function POST(req: Request) {
 
     // Award RING with tier multiplier
     const refMeta: any = (ref.publicMetadata as any) || {};
-    const refPrev = Number(refMeta.ring || 0);
-    const claimantPrev = Number(claimantMeta.ring || 0);
+    const mode = getTokenIssuanceMode();
     const referralCount = Number(refMeta.referralCount || 0);
 
     // Multiplier: 10+ referrals = 2x RING awards
@@ -70,24 +70,28 @@ export async function POST(req: Request) {
     const referrerAward = baseAward * multiplier;
     const claimantBonus = 100; // Extra bonus for new users
 
-    const refNew = refPrev + referrerAward;
-    const claimantNew = claimantPrev + claimantBonus;
+    const refNew = mode === 'off' ? Number(refMeta.ring || 0) + referrerAward : referrerAward;
+    const claimantNew = mode === 'off' ? Number(claimantMeta.ring || 0) + claimantBonus : claimantBonus;
 
-    // Update Clerk metadata
-    await clerkClient.users.updateUser(referrerId, {
-      publicMetadata: {
-        ...refMeta,
-        ring: refNew,
-        referralCount: referralCount + 1,
-      }
-    });
-    await clerkClient.users.updateUser(user.id, {
-      publicMetadata: {
-        ...claimantMeta,
-        ring: claimantNew,
-        referredBy: referrerId,
-      }
-    });
+    // Update Clerk metadata (best-effort; ring is not source of truth in shadow/live)
+    try {
+      await clerkClient.users.updateUser(referrerId, {
+        publicMetadata: {
+          ...refMeta,
+          ...(mode === 'off' ? { ring: refNew } : {}),
+          referralCount: referralCount + 1,
+        }
+      });
+      await clerkClient.users.updateUser(user.id, {
+        publicMetadata: {
+          ...claimantMeta,
+          ...(mode === 'off' ? { ring: claimantNew } : {}),
+          referredBy: referrerId,
+        }
+      });
+    } catch (clerkErr: any) {
+      console.warn('[referral/claim] Clerk metadata update skipped:', clerkErr.message);
+    }
 
     // Update database
     try {
@@ -98,16 +102,31 @@ export async function POST(req: Request) {
         where: { clerkId: user.id },
       });
 
-      if (referrer) {
-        await prisma.user.update({
-          where: { id: referrer.id },
-          data: { ringBalance: refNew },
+      if (mode === 'off') {
+        if (referrer) {
+          await prisma.user.update({
+            where: { id: referrer.id },
+            data: { ringBalance: refNew },
+          });
+        }
+        if (claimantUser) {
+          await prisma.user.update({
+            where: { id: claimantUser.id },
+            data: { ringBalance: claimantNew },
+          });
+        }
+      } else {
+        await applyLedgerEarn({
+          userId: referrerId,
+          amount: referrerAward,
+          reasonCode: 'referral_reward',
+          metadata: { referral_count: referralCount + 1 },
         });
-      }
-      if (claimantUser) {
-        await prisma.user.update({
-          where: { id: claimantUser.id },
-          data: { ringBalance: claimantNew },
+        await applyLedgerEarn({
+          userId: user.id,
+          amount: claimantBonus,
+          reasonCode: 'referral_bonus',
+          metadata: { referred_by: referrerId },
         });
       }
     } catch (dbErr: any) {
@@ -117,17 +136,39 @@ export async function POST(req: Request) {
     // Post referral link to X (bonus +100 RING to referrer)
     const posted = await postReferralToX(code, ref.username || 'OneRing User');
     if (posted) {
-      const finalRefBalance = refNew + 100;
-      await clerkClient.users.updateUser(referrerId, {
-        publicMetadata: { ...refMeta, ring: finalRefBalance, referralCount: referralCount + 1 },
+      if (mode === 'off') {
+        const finalRefBalance = refNew + 100;
+        try {
+          await clerkClient.users.updateUser(referrerId, {
+            publicMetadata: { ...refMeta, ring: finalRefBalance, referralCount: referralCount + 1 },
+          });
+        } catch (clerkErr: any) {
+          console.warn('[referral/claim] Clerk bonus update skipped:', clerkErr.message);
+        }
+        console.log('[referral/claim] posted referral link to X, awarded +100 RING bonus');
+        return new Response(
+          JSON.stringify({
+            success: true,
+            referrerId,
+            claimantNew,
+            referrerNew: finalRefBalance,
+            bonus: '+100 RING for posting referral link to X',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      await applyLedgerEarn({
+        userId: referrerId,
+        amount: 100,
+        reasonCode: 'referral_share_bonus',
+        metadata: { referral_code: code },
       });
-      console.log('[referral/claim] posted referral link to X, awarded +100 RING bonus');
       return new Response(
         JSON.stringify({
           success: true,
           referrerId,
           claimantNew,
-          referrerNew: finalRefBalance,
+          referrerNew: refNew,
           bonus: '+100 RING for posting referral link to X',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }

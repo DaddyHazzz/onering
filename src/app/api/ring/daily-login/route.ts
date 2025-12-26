@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-handler";
+import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const DAILY_LOGIN_BONUS = 10;
 
@@ -25,10 +26,24 @@ export async function POST(req: NextRequest) {
       user = await prisma.user.create({
         data: {
           clerkId: userId,
-          ringBalance: DAILY_LOGIN_BONUS,
+          ringBalance: 0,
           lastLoginAt: new Date(),
         },
       });
+      const mode = getTokenIssuanceMode();
+      if (mode === "off") {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { ringBalance: DAILY_LOGIN_BONUS },
+        });
+      } else {
+        await applyLedgerEarn({
+          userId,
+          amount: DAILY_LOGIN_BONUS,
+          reasonCode: "daily_login",
+          metadata: { first_login: true },
+        });
+      }
       console.log("[ring/daily-login] created user with first login bonus:", user.id);
       return Response.json({
         success: true,
@@ -52,21 +67,34 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Award daily bonus
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        ringBalance: { increment: DAILY_LOGIN_BONUS },
-        lastLoginAt: now,
-      },
-    });
+    const mode = getTokenIssuanceMode();
+    if (mode === "off") {
+      // Award daily bonus (legacy)
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          ringBalance: { increment: DAILY_LOGIN_BONUS },
+          lastLoginAt: now,
+        },
+      });
+    } else {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: now },
+      });
+      await applyLedgerEarn({
+        userId,
+        amount: DAILY_LOGIN_BONUS,
+        reasonCode: "daily_login",
+      });
+    }
 
     console.log("[ring/daily-login] awarded daily bonus:", userId, { bonus: DAILY_LOGIN_BONUS, newBalance: user.ringBalance });
 
     return Response.json({
       success: true,
       ringEarned: DAILY_LOGIN_BONUS,
-      newBalance: user.ringBalance,
+        newBalance: user.ringBalance,
       message: "Daily login bonus! +10 RING",
     });
   } catch (error: any) {
