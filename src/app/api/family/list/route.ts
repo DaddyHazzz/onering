@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-handler";
+import { getEffectiveRingBalance } from "@/lib/ring-ledger";
 
 export async function GET(req: NextRequest) {
   try {
@@ -30,14 +31,14 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Calculate combined ring balance
+    const primaryBalance = await getEffectiveRingBalance(userId);
     const familyRing = primaryUser.familyMembers.reduce((sum: number, member: any) => sum + member.ringBalance, 0);
-    const combinedRingBalance = primaryUser.ringBalance + familyRing;
+    const combinedRingBalance = primaryBalance.effectiveBalance + familyRing;
 
     return Response.json({
       primaryUser: {
         id: primaryUser.id,
-        ringBalance: primaryUser.ringBalance,
+        ringBalance: primaryBalance.effectiveBalance,
         verified: primaryUser.verified,
       },
       familyMembers: primaryUser.familyMembers.map((m: any) => ({
