@@ -7,7 +7,7 @@ Requires API key authentication with scope enforcement.
 Kill switch: ONERING_EXTERNAL_API_ENABLED (default 0)
 """
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from backend.features.external.api_keys import (
     check_rate_limit,
     is_external_api_enabled,
 )
+from backend.features.tokens.balance import get_effective_ring_balance
 
 
 router = APIRouter(prefix="/v1/external", tags=["external"])
@@ -33,6 +34,7 @@ class ExternalApiKeyInfo(BaseModel):
 
 async def require_api_key(
     request: Request,
+    response: Response,
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> ExternalApiKeyInfo:
@@ -54,26 +56,52 @@ async def require_api_key(
         )
     
     api_key = authorization[7:]  # Strip "Bearer "
-    
+
+    # Derive client IP
+    client_ip = None
+    if request.headers.get("x-forwarded-for"):
+        client_ip = request.headers.get("x-forwarded-for").split(",")[0].strip()
+    elif request.client:
+        client_ip = request.client.host
+
     # Validate key
-    key_info = validate_api_key(db, api_key)
+    key_info = validate_api_key(db, api_key, client_ip=client_ip)
     if not key_info:
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired API key"
         )
-    
-    # Check rate limit
-    allowed, current_count, limit = check_rate_limit(
+
+    # Check rate limit (concurrency-safe)
+    allowed, current_count, limit, reset_at = check_rate_limit(
         db, key_info["key_id"], key_info["rate_limit_tier"]
     )
-    
+    remaining = max(limit - current_count, 0)
+    reset_ts = int(reset_at.timestamp())
+
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset_ts)
+
     if not allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit exceeded ({current_count}/{limit} requests this hour)"
+            detail=f"Rate limit exceeded ({current_count}/{limit} requests this hour)",
+            headers={
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": str(remaining),
+                "X-RateLimit-Reset": str(reset_ts),
+            },
         )
-    
+
+    # Stash rate limit info for downstream endpoints
+    request.state.rate_limit = {
+        "limit": limit,
+        "current": current_count,
+        "remaining": remaining,
+        "reset_at": reset_at,
+    }
+
     return ExternalApiKeyInfo(**key_info)
 
 
@@ -103,11 +131,12 @@ class WhoAmIResponse(BaseModel):
 @router.get("/me", response_model=WhoAmIResponse)
 async def get_whoami(
     key_info: ExternalApiKeyInfo = Depends(require_api_key),
-    db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """Get information about the authenticated API key."""
-    # Get current rate limit status
-    _, current_count, limit = check_rate_limit(db, key_info.key_id, key_info.rate_limit_tier)
+    rate_limit = getattr(request.state, "rate_limit", None) if request else None
+    limit = rate_limit["limit"] if rate_limit else 0
+    current_count = rate_limit["current"] if rate_limit else 0
     
     return WhoAmIResponse(
         key_id=key_info.key_id,
@@ -150,12 +179,13 @@ async def list_rings(
     if not row:
         return RingsListResponse(rings=[])
     
+    summary = get_effective_ring_balance(db, key_info.owner_user_id)
     return RingsListResponse(
         rings=[
             RingItem(
                 id=str(row[0]),
                 user_id=row[1],
-                balance=row[2],
+                balance=summary["effective_balance"],
                 verified=row[3],
                 created_at=row[4].isoformat(),
             )
@@ -192,10 +222,11 @@ async def get_ring_detail(
     if not row:
         raise HTTPException(status_code=404, detail="Ring not found")
     
+    summary = get_effective_ring_balance(db, key_info.owner_user_id)
     return RingDetailResponse(
         id=str(row[0]),
         user_id=row[1],
-        balance=row[2],
+        balance=summary["effective_balance"],
         verified=row[3],
         created_at=row[4].isoformat(),
         updated_at=row[5].isoformat() if row[5] else row[4].isoformat(),

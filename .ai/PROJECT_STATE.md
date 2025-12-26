@@ -1,53 +1,71 @@
 # Project State (Canonical)
 
-**Last Updated:** December 25, 2025 @ 16:45 UTC  
-**Status:** Phase 10.3 COMPLETE. All tests passing (645 backend + 395 frontend = 1040 total).
+**Last Updated:** December 25, 2025 @ 20:00 UTC  
+**Status:** Phase 10.3 HARDENING COMPLETE. All tests passing (backend 648, frontend 395, total 1043).
 
 ## Test Coverage
 
 | Metric | Count | Status |
 |--------|-------|--------|
-| Backend Tests | 645/645 | ✅ 100% |
+| Backend Tests | 648/648 | ✅ 100% |
 | Frontend Tests | 395/395 | ✅ 100% |
-| **Total** | **1040/1040** | ✅ **100%** |
+| **Total** | **1043/1043** | ✅ **100%** |
 | Skipped | 0 | ✅ ZERO |
 | --no-verify bypasses | 0 | ✅ ZERO |
 
-**Last Full Run:** December 25, 2025 @ 16:45 UTC  
-**Duration:** ~3 minutes (sequential: backend ~3m 10s + frontend ~7s)
+**Last Full Run:** December 25, 2025 @ 20:00 UTC  
+**Duration:** ~3 minutes (backend + frontend)
 
 ## Current Phase Status
 
-### ✅ Phase 10.3: External Platform Surface Area
+### ✅ Phase 10.3: External Platform Hardening (COMPLETE)
 **Shipped:** December 25, 2025  
-**Commit:** `feat(phase10.3): add external read-only API and webhooks with signing`
+**Commit:** `feat(phase10.3): harden external API keys, rate limits, and webhooks delivery`
 
-**Parts Completed:**
+**Session 1 (Initial Implementation):**
+- Created external read-only API endpoints under `/v1/external/*`
+- Implemented API key system with bcrypt hashing and scopes
+- Added webhook system with HMAC-SHA256 signing
+- DB-backed rate limiting (hourly windows)
+- Kill switches (default disabled)
 
-**Part A: External Read-Only API**
-- Created 6 external endpoints under `/v1/external/*`
-- Endpoints: `/me` (whoami), `/rings` (list), `/rings/{id}` (detail), `/drafts`, `/ledger`, `/enforcement`
-- Bearer token authentication with API key validation
-- Scope enforcement: `read:rings`, `read:drafts`, `read:ledger`, `read:enforcement`
-- Rate limiting: free (100/hr), pro (1000/hr), enterprise (10000/hr)
-- DB-backed rate limit tracking with hourly windows
+**Session 2 (Hardening — December 25, 2025):**
+- ✅ **Webhook Delivery Worker** — Durable event log, retry with backoff [60s, 300s, 900s], dead-letter handling
+- ✅ **Security Hardening** — Replay protection (300s window), marks REPLAY_EXPIRED events
+- ✅ **API Key Management** — Zero-downtime rotation (preserve_key_id), last_used_at tracking, IP allowlist enforcement
+- ✅ **Rate Limit Atomicity** — Concurrency-safe increments with standard headers (X-RateLimit-Limit/Remaining/Reset)
+- ✅ **Monitoring & Observability** — Real-time dashboards (/admin/external, /monitoring/external), metrics endpoints
+- ✅ **Comprehensive Tests** — 3 new test suites (test_external_keys_hardening.py, test_webhooks_hardening.py, test_monitoring_external.py)
+- ✅ **Documentation** — Updated API_REFERENCE.md, PHASE_10_3_EXTERNAL_PLATFORM.md with hardening details
 
-**Part B: API Key System**
-- Created `external_api_keys` table with bcrypt-hashed keys
-- API key format: `osk_<base64_random>` (OneRing Secret Key)
-- Separate `key_id` for fast lookup without hashing
-- Full key only shown once on creation (security best practice)
-- Admin endpoints for key creation, revocation, and listing
-- Blocklist table for key/IP bans (`external_api_blocklist`)
+**Test Additions (Session 2):**
+- IP allowlist enforcement and validation
+- API key rotation (preserve_key_id=true/false)
+- Rate limit concurrency safety (atomic upserts, no over-issuance)
+- Webhook signature verification and replay protection
+- Webhook delivery worker (success, retry, dead-letter)
+- Monitoring endpoints (admin auth, metrics, filters)
 
-**Part C: Webhook System**
-- Created `external_webhooks` and `webhook_deliveries` tables
-- Webhook secret format: `whsec_<hex64>`
-- HMAC-SHA256 signing with format `v1,<hex_signature>`
-- Signed data: `<timestamp>.<json_payload>`
-- Signature verification with 300s tolerance (replay protection)
-- Event types: `draft.published`, `ring.passed`, `ring.earned`, `enforcement.failed`
-- Retry policy: 3 attempts with delays [60s, 300s, 900s], 10s timeout per attempt
+**Production Readiness:**
+- [x] Webhook delivery worker (--once / --loop modes)
+- [x] Signature verification examples (Python)
+- [x] Replay protection (timestamp-based 300s window)
+- [x] Rate limit concurrency tested (no quota over-issuance)
+- [x] IP allowlist enforcement
+- [x] Key rotation (zero-downtime)
+- [x] Dead-letter monitoring
+- [x] Admin console + monitoring dashboards
+- [ ] Admin key rotation policy (Phase 10.4)
+- [ ] Customer onboarding runbook (Phase 10.4)
+
+**Environment Flags Added (Session 2):**
+```bash
+ONERING_WEBHOOKS_DELIVERY_ENABLED=0        # Delivery worker kill switch
+ONERING_WEBHOOKS_MAX_ATTEMPTS=3            # Dead after 3 failures
+ONERING_WEBHOOKS_BACKOFF_SECONDS="60,300,900"  # Retry delays
+ONERING_WEBHOOKS_REPLAY_WINDOW_SECONDS=300     # 5-minute tolerance
+ONERING_WEBHOOKS_DELIVERY_LOOP_SECONDS=5       # Worker poll interval
+```
 - At-least-once delivery semantics with status tracking
 - Admin endpoints for webhook subscription management
 

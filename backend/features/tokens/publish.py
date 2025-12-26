@@ -16,10 +16,27 @@ from sqlalchemy.orm import Session
 from backend.features.enforcement.audit import resolve_receipt, resolve_qa_details
 from backend.features.enforcement.contracts import EnforcementReceipt
 from backend.features.tokens.ledger import issue_ring_for_publish, get_token_issuance_mode
+from backend.features.external.webhooks import enqueue_webhook_event
 
 
 def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _record_publish_conflict(db: Session, event_id: str, user_id: str) -> None:
+    try:
+        db.execute(
+            text(
+                """
+                INSERT INTO publish_event_conflicts (event_id, user_id, reason)
+                VALUES (:event_id, :user_id, 'idempotent_replay')
+                """
+            ),
+            {"event_id": event_id, "user_id": user_id},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _find_existing_publish_event(db: Session, event_id: str) -> Optional[Dict]:
@@ -174,6 +191,7 @@ def handle_publish_event(
     started_at = datetime.now(timezone.utc)
     existing = _find_existing_publish_event(db, event_id)
     if existing:
+        _record_publish_conflict(db, event_id, user_id)
         return {
             "ok": True,
             "event_id": existing["event_id"],
@@ -271,6 +289,52 @@ def handle_publish_event(
         token_ledger_id=ledger_id,
         token_pending_id=pending_id,
     )
+
+    # Webhook emissions (fire-and-forget enqueue)
+    enqueue_webhook_event(
+        db,
+        event_type="draft.published",
+        payload={
+            "event_id": event_id,
+            "user_id": user_id,
+            "platform": platform,
+            "published_at": published_at.isoformat(),
+            "platform_post_id": platform_post_id,
+            "qa_status": qa_status,
+            "reason_code": reason_code,
+        },
+        user_id=user_id,
+    )
+
+    if (issued_amount or pending_amount) and (issued_amount or pending_amount) > 0:
+        enqueue_webhook_event(
+            db,
+            event_type="ring.earned",
+            payload={
+                "event_id": event_id,
+                "user_id": user_id,
+                "mode": token_mode,
+                "amount": issued_amount or pending_amount,
+                "ledger_id": ledger_id,
+                "pending_id": pending_id,
+                "reason_code": reason_code,
+            },
+            user_id=user_id,
+        )
+
+    if reason_code not in ("ISSUED", "PENDING", "TOKEN_ISSUANCE_OFF"):
+        enqueue_webhook_event(
+            db,
+            event_type="enforcement.failed",
+            payload={
+                "event_id": event_id,
+                "user_id": user_id,
+                "reason_code": reason_code,
+                "qa_status": qa_status,
+                "violation_codes": violation_codes or [],
+            },
+            user_id=user_id,
+        )
 
     return {
         "ok": True,

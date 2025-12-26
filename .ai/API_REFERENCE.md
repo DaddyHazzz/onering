@@ -106,9 +106,16 @@ Last Updated: December 25, 2025
   - POST /v1/admin/external/keys
     - Create API key
     - Requires: Admin auth (X-Admin-Key header)
-    - Body: { owner_user_id, scopes: string[], tier: "free"|"pro"|"enterprise", expires_in_days?: number }
-    - Returns: { key_id, full_key, scopes, tier, created_at, expires_at }
+    - Body: { owner_user_id, scopes: string[], tier: "free"|"pro"|"enterprise", expires_in_days?: number, ip_allowlist?: string[] }
+    - Returns: { key_id, full_key, scopes, tier, created_at, expires_at, ip_allowlist }
     - **Note:** Full key only returned once
+
+  - POST /v1/admin/external/keys/{key_id}/rotate
+    - Rotate API key (Phase 10.3)
+    - Requires: Admin auth
+    - Body: { preserve_key_id?: bool (default true), ip_allowlist?: string[], expires_in_days?: number }
+    - Returns: { key_id, full_key, scopes, tier, expires_at, ip_allowlist }
+    - **Note:** Full key only returned once; old secret invalidated immediately
 
   - POST /v1/admin/external/keys/{key_id}/revoke
     - Revoke API key
@@ -118,7 +125,7 @@ Last Updated: December 25, 2025
   - GET /v1/admin/external/keys/{owner_user_id}
     - List user's API keys
     - Requires: Admin auth
-    - Returns: [{ key_id, scopes, tier, is_active, created_at, last_used_at }]
+    - Returns: [{ key_id, scopes, tier, is_active, created_at, last_used_at, expires_at, ip_allowlist, rotated_at }]
 
   - POST /v1/admin/external/webhooks
     - Create webhook subscription
@@ -141,56 +148,144 @@ Last Updated: December 25, 2025
 
   Events emitted when enabled (ONERING_WEBHOOKS_ENABLED=1):
   - `draft.published` — Draft published to platform
-  - `ring.passed` — Ring passed to collaborator
-  - `ring.earned` — RING tokens earned
-  - `enforcement.failed` — Agent enforcement action failed
+  - `ring.earned` — RING tokens earned from issuance
+  - `enforcement.failed` — Agent enforcement action failed (QA reject, receipt invalid, etc.)
 
-  ### Webhook Signature Verification
+  ### Webhook Delivery (Phase 10.3)
 
-  Webhooks are signed with HMAC-SHA256. Verify using:
+  - **Worker:** `python -m backend.workers.webhook_delivery --loop`
+  - **Retry backoff:** Configurable via `ONERING_WEBHOOKS_BACKOFF_SECONDS` (default "60,300,900")
+  - **Max attempts:** `ONERING_WEBHOOKS_MAX_ATTEMPTS` (default 3)
+  - **Dead-letter:** After max attempts, deliveries marked as `dead` with last_error persisted
+  - **Replay protection:** Events outside `ONERING_WEBHOOKS_REPLAY_WINDOW_SECONDS` (default 300) marked as REPLAY_EXPIRED
+
+  ### Webhook Signature Verification (Phase 10.3)
+
+  Webhooks are signed with HMAC-SHA256 over `timestamp.event_id.raw_body_bytes`. Verify using:
 
   ```python
   import hmac
   import hashlib
-  import json
 
-  def verify_webhook(payload_bytes, signature_header, secret):
-      """Verify webhook signature."""
-      if not signature_header.startswith("v1,"):
+  def verify_webhook(secret, signature_header, timestamp, event_id, body_bytes):
+      """Verify OneRing webhook signature."""
+      # Extract v1 signature from header
+      provided = None
+      for part in signature_header.split(','):
+          if part.strip().startswith('v1='):
+              provided = part.strip().split('=', 1)[1]
+              break
+      if not provided:
           return False
     
-      expected_sig = signature_header.split(",", 1)[1]
+      # Replay protection
+      now = int(datetime.now(timezone.utc).timestamp())
+      if abs(now - timestamp) > 300:  # 5-minute window
+          return False
     
-      # Extract timestamp from payload
-      payload_dict = json.loads(payload_bytes)
-      timestamp = payload_dict.get("_timestamp")
+      # Compute expected signature
+      signed_content = f"{timestamp}.{event_id}.".encode() + body_bytes
+      expected = hmac.new(secret.encode(), signed_content, hashlib.sha256).hexdigest()
     
-      # Reconstruct signed data
-      signed_data = f"{timestamp}.{payload_bytes.decode()}"
-    
-      # Compute signature
-      computed_sig = hmac.new(
-          secret.encode(),
-          signed_data.encode(),
-          hashlib.sha256
-      ).hexdigest()
-    
-      return hmac.compare_digest(computed_sig, expected_sig)
+      return hmac.compare_digest(provided, expected)
   ```
 
   Headers sent with webhooks:
-  - `X-OneRing-Signature` — HMAC signature (v1,<hex>)
-  - `X-OneRing-Event-Type` — Event type (draft.published, etc.)
+  - `X-OneRing-Signature` — HMAC signature (format: `t=<timestamp>,e=<event_id>,v1=<hex>`)
+  - `X-OneRing-Event-Type` — Event type (draft.published, ring.earned, enforcement.failed)
   - `X-OneRing-Event-ID` — Unique event identifier
-  - `X-OneRing-Timestamp` — Unix timestamp
+  - `X-OneRing-Timestamp` — Unix timestamp (for replay protection)
+
+  Payload structure:
+  ```json
+  {
+    "event_id": "evt_abc123",
+    "event_type": "ring.earned",
+    "timestamp": 1735150800,
+    "data": {
+      "user_id": "user_123",
+      "amount": 10,
+      "mode": "shadow",
+      "ledger_id": "ledger_456",
+      "reason_code": "ISSUED"
+    }
+  }
+  ```
+
+  ### Rate Limit Headers (Phase 10.3)
+
+  All external API responses include standard rate-limit headers:
+  - `X-RateLimit-Limit` — Maximum requests per hour for this tier
+  - `X-RateLimit-Remaining` — Remaining requests in current window
+  - `X-RateLimit-Reset` — Unix timestamp when window resets
+
+  Rate limits are enforced atomically with concurrency-safe increments (prevents quota over-issuance).
+
+  429 Response on Rate Limit Exceeded:
+  ```json
+  {
+    "detail": "Rate limit exceeded (101/100 requests this hour)"
+  }
+  ```
+  Headers included in 429 response for client retry logic.
+
+  ### IP Allowlist Enforcement (Phase 10.3)
+
+  API keys can specify an `ip_allowlist` array. When set, validation checks `X-Forwarded-For` (proxy) or `request.client.host`:
+  - If client IP not in allowlist → 401 Unauthorized
+  - Empty allowlist → all IPs allowed
+
+  Admin can update allowlist via rotate endpoint without changing key secret.
+
+  ### API Key Rotation (Phase 10.3)
+
+  Best practices for zero-downtime rotation:
+  1. Create new key with `preserve_key_id=true` (keeps key_id, issues new secret)
+  2. Update client configs with new secret
+  3. Test new secret in staging
+  4. Deploy to production
+  5. Old secret invalidated immediately (no grace window)
+
+  For new key_id rotation:
+  - Set `preserve_key_id=false`
+  - Old key_id deactivated, new key_id issued
+  - Update all references to key_id + secret
+
+  ### Monitoring Endpoints (Phase 10.3)
+
+  - GET /v1/monitoring/external/keys
+    - Requires: Admin auth (X-Admin-Key)
+    - Returns: { totals: [{ tier, active, revoked }], total_active, total_revoked, last_used_at }
+
+  - GET /v1/monitoring/webhooks/metrics
+    - Requires: Admin auth
+    - Returns: { delivered, failed, dead, pending, delivering, retrying }
+
+  - GET /v1/monitoring/webhooks/recent
+    - Requires: Admin auth
+    - Query: status?, event_type?, webhook_id?, limit (default 20, max 100)
+    - Returns: { deliveries: [{ id, webhook_id, event_id, event_type, status, attempts, last_status_code, last_error, created_at, next_attempt_at }] }
 
   ### Kill Switches
 
   Both external API and webhooks are disabled by default for safety:
   - `ONERING_EXTERNAL_API_ENABLED=0` (default) — External API returns 503
   - `ONERING_WEBHOOKS_ENABLED=0` (default) — No webhook events emitted
+  - `ONERING_WEBHOOKS_DELIVERY_ENABLED=0` (default) — Delivery worker exits immediately
 
   Enable explicitly when ready for production use.
+
+  **Phase 10.3 Hardening Checklist Before Enablement:**
+  1. ✅ Webhook delivery worker tested (--once and --loop modes)
+  2. ✅ Signature verification tested with real consumer
+  3. ✅ Replay protection validated (events outside window rejected)
+  4. ✅ Rate limit concurrency tested (no quota over-issuance)
+  5. ✅ IP allowlist enforcement tested
+  6. ✅ Key rotation tested (zero-downtime workflow)
+  7. ✅ Dead-letter deliveries monitored (alerting set up)
+  8. ✅ Monitoring dashboards deployed (/monitoring/external, /admin/external)
+  9. ⏸️ Admin key rotation policy established
+  10. ⏸️ Customer onboarding runbook complete
   - Auth: Collaborators only (creator + invited collaborators)
   - Query: optional `now` (ISO8601) for deterministic tests
   - Returns:

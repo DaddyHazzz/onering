@@ -10,10 +10,9 @@ from typing import Dict, Optional
 from backend.core.database import get_db
 from backend.features.tokens.ledger import (
     get_user_ledger,
-    get_pending_rewards,
-    get_user_balance,
     get_token_issuance_mode,
 )
+from backend.features.tokens.balance import get_effective_ring_balance
 from backend.features.tokens.publish import handle_publish_event
 from backend.features.tokens.reconciliation import (
     run_reconciliation,
@@ -44,15 +43,20 @@ class PublishEventIn(BaseModel):
 @router.get("/balance/{user_id}")
 def get_balance(user_id: str, db: Session = Depends(get_db)) -> Dict:
     """Get user RING balance and pending rewards."""
-    mode = get_token_issuance_mode()
-    balance = get_user_balance(db, user_id)
-    pending = get_pending_rewards(db, user_id) if mode == "shadow" else {"totalPending": 0, "count": 0}
-    
+    summary = get_effective_ring_balance(db, user_id)
+    pending = {
+        "totalPending": summary["pending_total"],
+        "count": summary["pending_count"],
+    }
+
     return {
         "userId": user_id,
-        "balance": balance,
+        "balance": summary["balance"],
         "pending": pending,
-        "mode": mode,
+        "mode": summary["mode"],
+        "effective_balance": summary["effective_balance"],
+        "last_ledger_at": summary["last_ledger_at"],
+        "last_pending_at": summary["last_pending_at"],
     }
 
 
@@ -64,6 +68,16 @@ def get_ledger(user_id: str, limit: int = 20, db: Session = Depends(get_db)) -> 
         "userId": user_id,
         "entries": entries,
         "count": len(entries),
+    }
+
+
+@router.get("/summary/{user_id}")
+def get_summary(user_id: str, db: Session = Depends(get_db)) -> Dict:
+    """Get canonical token balance summary."""
+    summary = get_effective_ring_balance(db, user_id)
+    return {
+        "userId": user_id,
+        **summary,
     }
 
 

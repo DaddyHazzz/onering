@@ -15,6 +15,8 @@
 | **What's the plan?** | [ROADMAP.md](ROADMAP.md) | Next phases, priorities |
 | **What's the status?** | [PROJECT_STATE.md](PROJECT_STATE.md) | Latest test counts + date |
 | **Why design X?** | [DECISIONS.md](DECISIONS.md) | Architecture + trade-off rationale |
+| **Open questions?** | [OPEN_QUESTIONS_AND_TODOS.md](OPEN_QUESTIONS_AND_TODOS.md) | Unresolved decisions + tech debt |
+| **Phase 10 plan?** | [PHASE_10_MASTER_PLAN.md](PHASE_10_MASTER_PLAN.md) | Comprehensive Phase 10 execution plan |
 | **Phase history** | [PHASES/](PHASES/) | Active specs + archives in PHASES/COMPLETED |
 | **Agent system** | [AGENTS_OVERVIEW.md](AGENTS_OVERVIEW.md) | Strategy, Research, Writer, QA agents + more |
 | **Agent tasks** | [TASKS.md](TASKS.md) | Fast tasks vs. agent delegations |
@@ -33,6 +35,7 @@
   ROADMAP.md                  <- Next phases
   PROJECT_STATE.md            <- Current status + test counts
   DECISIONS.md                <- Design decisions + rationale
+  OPEN_QUESTIONS_AND_TODOS.md <- Unresolved questions + tech debt
   TASKS.md                    <- Task board (fast + agent)
   AGENTS_OVERVIEW.md          <- Agent system (Strategy, Research, Writer, QA, etc.)
   AGENT_BRIEF.md              <- Agent work template

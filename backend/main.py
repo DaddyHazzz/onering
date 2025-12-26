@@ -39,7 +39,7 @@ try:
     from backend.core.middleware.ratelimit import RateLimitMiddleware
     from backend.core.ratelimit import build_rate_limit_config_from_env
     from backend.core.tracing import setup_tracing
-    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode, insights, enforcement, monitoring_enforcement, monitoring_tokens, tokens, external, external_admin
+    from backend.api import auth, posts, analytics, streaks, challenges, coach, momentum, profile, archetypes, sharecard, collaboration, collaboration_invites, health, billing, admin_billing, realtime, metrics, ai, format as format_api, timeline, export as export_api, waitmode, insights, enforcement, monitoring_enforcement, monitoring_tokens, monitoring_external, tokens, external, external_admin
     from backend.agents.viral_thread import generate_viral_thread
     from backend.features.enforcement.service import EnforcementRequest, run_enforcement_pipeline, get_enforcement_mode
     import groq
@@ -125,6 +125,7 @@ app.include_router(ai.router, tags=["ai"])
 app.include_router(enforcement.router, tags=["enforcement"])
 app.include_router(monitoring_enforcement.router, tags=["monitoring"])
 app.include_router(monitoring_tokens.router, tags=["monitoring"])
+app.include_router(monitoring_external.router, tags=["monitoring"])
 app.include_router(format_api.router, tags=["format"])
 app.include_router(timeline.router, tags=["timeline"])
 app.include_router(export_api.router, tags=["export"])

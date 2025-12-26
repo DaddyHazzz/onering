@@ -159,6 +159,8 @@ model ExternalApiKey {
   lastUsedAt    DateTime? @map("last_used_at")
   expiresAt     DateTime? @map("expires_at")
   metadata      Json      @default("{}")
+  ipAllowlist   String[]  @default([]) @map("ip_allowlist")
+  rotatedAt     DateTime? @map("rotated_at")
 
   @@index([keyId], where: { isActive: true })
   @@index([ownerUserId])
@@ -187,20 +189,36 @@ model WebhookDelivery {
   webhookId    String           @map("webhook_id")
   webhook      ExternalWebhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
   eventId      String           @map("event_id")
+  event        WebhookEvent     @relation(fields: [eventId], references: [id], onDelete: Cascade)
   eventType    String           @map("event_type")
-  status       String           // pending, succeeded, failed
+  status       String           // pending, delivering, succeeded, failed, dead
   attempts     Int              @default(0)
   lastError    String?          @map("last_error")
+  lastStatus   Int?             @map("last_status_code")
   payload      Json
   createdAt    DateTime         @default(now()) @map("created_at")
   deliveredAt  DateTime?        @map("delivered_at")
-  nextRetryAt  DateTime?        @map("next_retry_at")
+  nextAttemptAt DateTime?       @map("next_attempt_at")
+  eventTimestamp DateTime       @map("event_timestamp")
 
   @@index([webhookId])
   @@index([eventId])
   @@index([status])
-  @@index([nextRetryAt], where: { status: "pending" })
+  @@index([nextAttemptAt], where: { status: "pending" })
   @@map("webhook_deliveries")
+}
+
+model WebhookEvent {
+  id          String            @id @default(uuid())
+  eventType   String            @map("event_type")
+  userId      String?           @map("user_id")
+  payload     Json
+  createdAt   DateTime          @default(now()) @map("created_at")
+  deliveries  WebhookDelivery[]
+
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("webhook_events")
 }
 
 model ExternalApiRateLimit {

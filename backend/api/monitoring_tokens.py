@@ -31,6 +31,8 @@ class TokenEventItem(BaseModel):
     token_pending_id: Optional[str]
     issuance_latency_ms: Optional[int] = None
     created_at: Optional[str]
+    last_clerk_sync_at: Optional[str] = None
+    last_clerk_sync_error: Optional[str] = None
 
 
 class TokenEventsResponse(BaseModel):
@@ -43,6 +45,9 @@ class TokenMetrics(BaseModel):
     blocked_issuance: int = 0
     top_reason_codes: Dict[str, int] = {}
     p90_issuance_latency_ms: Optional[int] = None
+    reconciliation_mismatches: int = 0
+    clerk_sync_failures_24h: int = 0
+    idempotency_conflicts_24h: int = 0
 
 
 class TokenMetricsResponse(BaseModel):
@@ -72,13 +77,15 @@ def recent_publish_events(
     with get_db_session() as session:
         stmt = text(
             """
-            SELECT id, user_id, platform, published_at, platform_post_id,
-                   enforcement_request_id, enforcement_receipt_id, qa_status, violation_codes, audit_ok,
-                   token_mode, token_issued_amount, token_pending_amount, token_reason_code,
-                   token_ledger_id, token_pending_id, metadata, created_at
-            FROM publish_events
-            WHERE (:since IS NULL OR created_at >= :since)
-            ORDER BY created_at DESC
+            SELECT pe.id, pe.user_id, pe.platform, pe.published_at, pe.platform_post_id,
+                   pe.enforcement_request_id, pe.enforcement_receipt_id, pe.qa_status, pe.violation_codes, pe.audit_ok,
+                   pe.token_mode, pe.token_issued_amount, pe.token_pending_amount, pe.token_reason_code,
+                   pe.token_ledger_id, pe.token_pending_id, pe.metadata, pe.created_at,
+                   rcs.last_sync_at, rcs.last_error
+            FROM publish_events pe
+            LEFT JOIN ring_clerk_sync rcs ON rcs.user_id = pe.user_id
+            WHERE (:since IS NULL OR pe.created_at >= :since)
+            ORDER BY pe.created_at DESC
             LIMIT :limit
             """
         )
@@ -108,6 +115,8 @@ def recent_publish_events(
                     token_pending_id=row[15],
                     issuance_latency_ms=latency if isinstance(latency, int) else None,
                     created_at=row[17].isoformat() if row[17] else None,
+                    last_clerk_sync_at=row[18].isoformat() if row[18] else None,
+                    last_clerk_sync_error=row[19],
                 )
             )
 
@@ -173,11 +182,53 @@ def token_metrics(
             index = max(0, min(index, len(latencies) - 1))
             p90_latency = latencies[index]
 
+        mismatch_row = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM ring_ledger
+                WHERE event_type = 'ADJUSTMENT'
+                  AND reason_code = 'reconciliation_mismatch'
+                  AND created_at >= :cutoff
+                """
+            ),
+            {"cutoff": cutoff},
+        ).fetchone()
+        mismatches = int(mismatch_row[0] or 0) if mismatch_row else 0
+
+        clerk_fail_row = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM ring_clerk_sync
+                WHERE last_error_at IS NOT NULL
+                  AND last_error_at >= :cutoff
+                """
+            ),
+            {"cutoff": cutoff},
+        ).fetchone()
+        clerk_failures = int(clerk_fail_row[0] or 0) if clerk_fail_row else 0
+
+        conflict_row = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM publish_event_conflicts
+                WHERE created_at >= :cutoff
+                """
+            ),
+            {"cutoff": cutoff},
+        ).fetchone()
+        conflicts = int(conflict_row[0] or 0) if conflict_row else 0
+
     metrics = TokenMetrics(
         total_issued=total_issued,
         total_pending=total_pending,
         blocked_issuance=blocked,
         top_reason_codes=top_reason_codes,
         p90_issuance_latency_ms=p90_latency,
+        reconciliation_mismatches=mismatches,
+        clerk_sync_failures_24h=clerk_failures,
+        idempotency_conflicts_24h=conflicts,
     )
     return TokenMetricsResponse(window_hours=window_hours, metrics=metrics)

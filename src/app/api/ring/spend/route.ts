@@ -2,6 +2,7 @@
 import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
+import { applyLedgerSpend, getTokenIssuanceMode } from "@/lib/ring-ledger";
 import { z } from "zod";
 
 const schema = z.object({
@@ -29,6 +30,33 @@ export async function POST(req: NextRequest) {
     const cost = SPEND_COSTS[action];
     if (!cost) {
       return Response.json({ error: "Unknown action" }, { status: 400 });
+    }
+
+    const mode = getTokenIssuanceMode();
+    if (mode !== "off") {
+      const spend = await applyLedgerSpend({
+        userId,
+        amount: cost,
+        reasonCode: `action:${action}`,
+        metadata: { action },
+      });
+      if (!spend.ok) {
+        const errorCode = spend.error === "INSUFFICIENT_BALANCE" ? "INSUFFICIENT_BALANCE" : "LEGACY_RING_WRITE_BLOCKED";
+        const suggestedFix = spend.error === "INSUFFICIENT_BALANCE"
+          ? "Reduce spend amount or earn more RING before spending."
+          : "Use ledger-based spend flow when token issuance is enabled.";
+        return Response.json(
+          { error: "Spend blocked", code: errorCode, suggestedFix },
+          { status: 400 }
+        );
+      }
+      return Response.json({
+        success: true,
+        action,
+        ringSpent: cost,
+        newBalance: spend.balanceAfter,
+        message: `${action === "boost" ? "Post boosted! dYs?" : "Username leased! dY``"}`,
+      });
     }
 
     // Get user from database

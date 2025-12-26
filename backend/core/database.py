@@ -437,6 +437,30 @@ publish_events = Table(
     Index('idx_publish_events_enforcement', 'enforcement_request_id', 'enforcement_receipt_id'),
 )
 
+# Publish event conflicts (Phase 10.2 idempotency tracking)
+publish_event_conflicts = Table(
+    'publish_event_conflicts',
+    metadata,
+    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('event_id', String(100), nullable=False, index=True),
+    Column('user_id', String(100), nullable=True, index=True),
+    Column('reason', String(100), nullable=False, server_default='idempotent_replay'),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False, index=True),
+    Index('idx_publish_event_conflicts_event', 'event_id', 'created_at'),
+)
+
+# Clerk sync status for ring balances (Phase 10.2)
+ring_clerk_sync = Table(
+    'ring_clerk_sync',
+    metadata,
+    Column('user_id', String(100), primary_key=True),
+    Column('last_sync_at', DateTime(timezone=True), nullable=True),
+    Column('last_error', Text, nullable=True),
+    Column('last_error_at', DateTime(timezone=True), nullable=True),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    Index('idx_ring_clerk_sync_error_at', 'last_error_at'),
+)
+
 # Wait mode tables (Phase 8.4 - Waiting for the Ring)
 wait_notes = Table(
     'wait_notes',

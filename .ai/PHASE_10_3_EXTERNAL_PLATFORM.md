@@ -1,10 +1,57 @@
 # Phase 10.3: External Platform Surface Area
 
 **Shipped:** December 25, 2025  
-**Duration:** Single session (~2 hours)  
-**Status:** ✅ COMPLETE — All tests passing (27/27)
+**Duration:** Two sessions (~4 hours total)  
+**Status:** ✅ HARDENING COMPLETE — Production-ready with all security mitigations
 
-## Overview
+## Phase 10.3 Hardening (Session 2 — December 25, 2025)
+
+### Completed Deliverables
+1. ✅ **Webhook Delivery Worker** — Durable event log, retry with backoff [60s, 300s, 900s], dead-letter handling
+2. ✅ **Security Hardening** — HMAC signing over `timestamp.event_id.body`, replay protection (300s window), marks REPLAY_EXPIRED
+3. ✅ **API Key Management** — Zero-downtime rotation (preserve_key_id), last_used_at tracking, IP allowlist enforcement
+4. ✅ **Rate Limit Atomicity** — Concurrency-safe increments (atomic upsert), standard headers (X-RateLimit-Limit/Remaining/Reset)
+5. ✅ **Monitoring & Observability** — Real-time dashboards (/admin/external, /monitoring/external), metrics endpoints
+6. ✅ **Comprehensive Tests** — Backend: 3 test suites (keys, webhooks, monitoring); Frontend: admin console + monitoring pages
+7. ✅ **Documentation** — API_REFERENCE.md updated, PHASE_10_3_EXTERNAL_PLATFORM.md complete, signature verification examples
+
+### Test Coverage
+- `test_external_keys_hardening.py` — IP allowlist, rotation, concurrency-safe rate limits
+- `test_webhooks_hardening.py` — Signing, replay protection, delivery worker, dead-letter
+- `test_monitoring_external.py` — Admin auth, metrics aggregation, delivery filters
+
+### Environment Variables (Phase 10.3 Hardening)
+```bash
+# Webhook Delivery
+ONERING_WEBHOOKS_DELIVERY_ENABLED=0       # Default OFF
+ONERING_WEBHOOKS_MAX_ATTEMPTS=3           # Dead after 3 failures
+ONERING_WEBHOOKS_BACKOFF_SECONDS="60,300,900"  # Retry delays
+ONERING_WEBHOOKS_REPLAY_WINDOW_SECONDS=300     # 5-minute tolerance
+ONERING_WEBHOOKS_DELIVERY_LOOP_SECONDS=5       # Worker poll interval
+```
+
+### Production Readiness Checklist
+- [x] Webhook delivery worker tested (--once and --loop)
+- [x] Signature verification tested with real payloads
+- [x] Replay protection validated (old events rejected)
+- [x] Rate limit concurrency tested (no quota over-issuance)
+- [x] IP allowlist enforcement tested
+- [x] Key rotation tested (zero-downtime workflow)
+- [x] Dead-letter deliveries monitored (alerting planned)
+- [x] Monitoring dashboards deployed
+- [ ] Admin key rotation policy established (Phase 10.4)
+- [ ] Customer onboarding runbook complete (Phase 10.4)
+
+### Enablement Workflow
+1. Set `ONERING_EXTERNAL_API_ENABLED=1`
+2. Set `ONERING_WEBHOOKS_ENABLED=1`
+3. Start delivery worker: `python -m backend.workers.webhook_delivery --loop`
+4. Monitor `/monitoring/external` dashboard for delivery success rate
+5. Set up alerting (dead deliveries > 10/hr, 429 rate > 5%)
+
+---
+
+## Overview (Original Phase 10.3)
 
 Phase 10.3 delivers a minimal, secure external platform API that allows third-party developers to read OneRing data and receive real-time event notifications via webhooks. Both systems are **disabled by default** (kill switches) for safe production rollout.
 

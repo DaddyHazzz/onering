@@ -1,120 +1,126 @@
-"""
-Webhook delivery system (Phase 10.3).
+"""Webhook delivery system (Phase 10.3 hardening).
 
-Handles webhook subscriptions, event emission, and delivery with retries.
-Uses HMAC-SHA256 signatures for security.
-
-Event types:
-- draft.published
-- ring.passed
-- ring.earned (token issuance)
-- enforcement.failed
+Durable webhook event log + delivery worker with retries and replay-safe signing.
 """
+from __future__ import annotations
+
 import os
 import hmac
 import hashlib
 import json
 import secrets
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict, Tuple
+
+import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-import httpx
 
 
 WEBHOOK_TIMEOUT_SECONDS = 10
-MAX_RETRY_ATTEMPTS = 3
-RETRY_DELAYS = [60, 300, 900]  # 1min, 5min, 15min
+
+
+def _parse_backoff() -> List[int]:
+    raw = os.getenv("ONERING_WEBHOOKS_BACKOFF_SECONDS", "60,300,900")
+    try:
+        values = [int(x.strip()) for x in raw.split(",") if x.strip()]
+        return values or [60, 300, 900]
+    except Exception:
+        return [60, 300, 900]
+
+
+def get_max_attempts() -> int:
+    try:
+        return int(os.getenv("ONERING_WEBHOOKS_MAX_ATTEMPTS", "3"))
+    except ValueError:
+        return 3
 
 
 def is_webhooks_enabled() -> bool:
-    """Check if webhooks are enabled."""
     return os.getenv("ONERING_WEBHOOKS_ENABLED", "0") == "1"
 
 
+def is_delivery_enabled() -> bool:
+    return os.getenv("ONERING_WEBHOOKS_DELIVERY_ENABLED", "0") == "1"
+
+
 def generate_webhook_secret() -> str:
-    """Generate webhook signing secret."""
     return f"whsec_{secrets.token_hex(32)}"
 
 
-def sign_webhook_payload(payload: dict, secret: str, timestamp: int) -> str:
-    """
-    Generate HMAC-SHA256 signature for webhook payload.
-    Signature format: v1,<hex_signature>
-    Signed data: <timestamp>.<json_payload>
-    """
-    payload_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
-    signed_content = f"{timestamp}.{payload_str}"
-    signature = hmac.new(
-        secret.encode(),
-        signed_content.encode(),
-        hashlib.sha256
-    ).hexdigest()
-    return f"v1,{signature}"
+def _canonical_json_bytes(payload: Dict) -> bytes:
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
 
 
-def verify_webhook_signature(payload: dict, signature: str, secret: str, timestamp: int, tolerance_seconds: int = 300) -> bool:
-    """
-    Verify webhook signature.
-    Allows timestamp tolerance to prevent replay attacks.
-    """
-    # Check timestamp freshness
-    now = int(datetime.utcnow().timestamp())
-    if abs(now - timestamp) > tolerance_seconds:
+def sign_webhook(secret: str, timestamp: int, event_id: str, body_bytes: bytes) -> str:
+    """Sign webhook payload using HMAC-SHA256 over timestamp + event_id + raw body."""
+    signed_content = f"{timestamp}.{event_id}.".encode() + body_bytes
+    digest = hmac.new(secret.encode(), signed_content, hashlib.sha256).hexdigest()
+    # Format includes timestamp and event id for consumer convenience
+    return f"t={timestamp},e={event_id},v1={digest}"
+
+
+def verify_webhook(secret: str, signature_header: str, timestamp: int, event_id: str, body_bytes: bytes, tolerance_seconds: int = 300) -> bool:
+    """Verify webhook signature and replay window."""
+    try:
+        tolerance = int(os.getenv("ONERING_WEBHOOKS_REPLAY_WINDOW_SECONDS", str(tolerance_seconds)))
+    except ValueError:
+        tolerance = tolerance_seconds
+    # Replay protection
+    now = int(datetime.now(timezone.utc).timestamp())
+    if abs(now - timestamp) > tolerance:
         return False
-    
-    # Verify signature
-    expected_sig = sign_webhook_payload(payload, secret, timestamp)
-    return hmac.compare_digest(signature, expected_sig)
+
+    # Extract provided signature
+    provided = None
+    for part in signature_header.split(','):
+        if part.strip().startswith('v1='):
+            provided = part.strip().split('=', 1)[1]
+            break
+    if not provided:
+        return False
+
+    expected_header = sign_webhook(secret, timestamp, event_id, body_bytes)
+    expected = None
+    for part in expected_header.split(','):
+        if part.strip().startswith('v1='):
+            expected = part.strip().split('=', 1)[1]
+            break
+    if not expected:
+        return False
+
+    return hmac.compare_digest(provided, expected)
 
 
-def create_webhook_subscription(
-    db: Session,
-    owner_user_id: str,
-    url: str,
-    events: List[str],
-) -> Dict:
-    """
-    Create webhook subscription.
-    Returns subscription details including secret (only shown once).
-    """
+def create_webhook_subscription(db: Session, owner_user_id: str, url: str, events: List[str]) -> Dict:
     secret = generate_webhook_secret()
-    
     result = db.execute(
-        text("""
+        text(
+            """
             INSERT INTO external_webhooks (owner_user_id, url, secret, events)
             VALUES (:owner_user_id, :url, :secret, :events)
             RETURNING id
-        """),
-        {
-            "owner_user_id": owner_user_id,
-            "url": url,
-            "secret": secret,
-            "events": events,
-        }
+            """
+        ),
+        {"owner_user_id": owner_user_id, "url": url, "secret": secret, "events": events},
     )
     db.commit()
-    
-    return {
-        "id": str(result.scalar()),
-        "url": url,
-        "secret": secret,  # Only shown once
-        "events": events,
-    }
+    return {"id": str(result.scalar()), "url": url, "secret": secret, "events": events}
 
 
 def list_webhook_subscriptions(db: Session, owner_user_id: str) -> List[Dict]:
-    """List webhook subscriptions for user."""
     rows = db.execute(
-        text("""
+        text(
+            """
             SELECT id, url, events, is_active, created_at, last_delivered_at
             FROM external_webhooks
             WHERE owner_user_id = :owner_user_id
             ORDER BY created_at DESC
-        """),
-        {"owner_user_id": owner_user_id}
+            """
+        ),
+        {"owner_user_id": owner_user_id},
     ).fetchall()
-    
+
     return [
         {
             "id": str(row[0]),
@@ -129,121 +135,170 @@ def list_webhook_subscriptions(db: Session, owner_user_id: str) -> List[Dict]:
 
 
 def delete_webhook_subscription(db: Session, webhook_id: str, owner_user_id: str) -> bool:
-    """Delete webhook subscription (if owned by user)."""
     result = db.execute(
-        text("""
+        text(
+            """
             UPDATE external_webhooks
             SET is_active = false
             WHERE id = :webhook_id AND owner_user_id = :owner_user_id
             RETURNING id
-        """),
-        {"webhook_id": webhook_id, "owner_user_id": owner_user_id}
+            """
+        ),
+        {"webhook_id": webhook_id, "owner_user_id": owner_user_id},
     )
     db.commit()
     return result.rowcount > 0
 
 
-def emit_webhook_event(
-    db: Session,
-    event_type: str,
-    payload: Dict,
-    user_id: Optional[str] = None,
-) -> int:
-    """
-    Emit webhook event to all matching subscriptions.
-    Returns count of deliveries created.
-    """
+def enqueue_webhook_event(db: Session, event_type: str, payload: Dict, user_id: Optional[str] = None, event_id: Optional[str] = None) -> Tuple[str, int]:
+    """Persist webhook event and create delivery rows. Returns (event_id, delivery_count)."""
     if not is_webhooks_enabled():
-        return 0
-    
-    event_id = f"evt_{secrets.token_hex(16)}"
-    
+        return (event_id or f"evt_{secrets.token_hex(16)}", 0)
+
+    event_id = event_id or f"evt_{secrets.token_hex(16)}"
+    event_timestamp = datetime.now(timezone.utc)
+
+    # Persist event
+    db.execute(
+        text(
+            """
+            INSERT INTO webhook_events (id, event_type, user_id, payload, created_at)
+            VALUES (:id, :event_type, :user_id, CAST(:payload AS jsonb), :created_at)
+            ON CONFLICT (id) DO NOTHING
+            """
+        ),
+        {
+            "id": event_id,
+            "event_type": event_type,
+            "user_id": user_id,
+            "payload": json.dumps(payload),
+            "created_at": event_timestamp,
+        },
+    )
+
     # Find matching webhooks
     if user_id:
         webhooks = db.execute(
-            text("""
-                SELECT id, url, secret
+            text(
+                """
+                SELECT id
                 FROM external_webhooks
                 WHERE owner_user_id = :user_id
-                AND is_active = true
-                AND :event_type = ANY(events)
-            """),
-            {"user_id": user_id, "event_type": event_type}
+                  AND is_active = true
+                  AND :event_type = ANY(events)
+                """
+            ),
+            {"user_id": user_id, "event_type": event_type},
         ).fetchall()
     else:
-        # Global events (e.g., enforcement.failed)
         webhooks = db.execute(
-            text("""
-                SELECT id, url, secret
+            text(
+                """
+                SELECT id
                 FROM external_webhooks
                 WHERE is_active = true
-                AND :event_type = ANY(events)
-            """),
-            {"event_type": event_type}
+                  AND :event_type = ANY(events)
+                """
+            ),
+            {"event_type": event_type},
         ).fetchall()
-    
+
     if not webhooks:
-        return 0
-    
-    # Create delivery records
+        db.commit()
+        return event_id, 0
+
     delivery_count = 0
-    for webhook in webhooks:
-        webhook_id, url, secret = webhook
-        
+    for (webhook_id,) in webhooks:
         db.execute(
-            text("""
+            text(
+                """
                 INSERT INTO webhook_deliveries
-                (webhook_id, event_id, event_type, status, payload, next_retry_at)
-                VALUES (:webhook_id, :event_id, :event_type, 'pending', :payload, NOW())
-            """),
+                (webhook_id, event_id, event_type, status, attempts, payload, next_attempt_at, event_timestamp)
+                VALUES (:webhook_id, :event_id, :event_type, 'pending', 0, CAST(:payload AS jsonb), :next_attempt_at, :event_timestamp)
+                """
+            ),
             {
                 "webhook_id": webhook_id,
                 "event_id": event_id,
                 "event_type": event_type,
                 "payload": json.dumps(payload),
-            }
+                "next_attempt_at": event_timestamp,
+                "event_timestamp": event_timestamp,
+            },
         )
         delivery_count += 1
-    
+
     db.commit()
-    return delivery_count
+    return event_id, delivery_count
 
 
 async def deliver_webhook(db: Session, delivery_id: str) -> bool:
-    """
-    Attempt to deliver a single webhook.
-    Returns True if successful, False otherwise.
-    Updates delivery record with result.
-    """
-    # Fetch delivery + webhook info
+    """Attempt a single delivery with retries/backoff. Returns True on success."""
+    if not is_delivery_enabled():
+        return False
+
+    backoff = _parse_backoff()
+    max_attempts = get_max_attempts()
+
     row = db.execute(
-        text("""
-            SELECT d.webhook_id, d.event_id, d.event_type, d.payload, d.attempts,
+        text(
+            """
+            SELECT d.id, d.webhook_id, d.event_id, d.event_type, d.payload, d.attempts, d.next_attempt_at, d.event_timestamp,
                    w.url, w.secret
             FROM webhook_deliveries d
             JOIN external_webhooks w ON w.id = d.webhook_id
-            WHERE d.id = :delivery_id AND d.status = 'pending'
-        """),
-        {"delivery_id": delivery_id}
+            WHERE d.id = :delivery_id AND d.status = 'pending' AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= NOW())
+            FOR UPDATE SKIP LOCKED
+            """
+        ),
+        {"delivery_id": delivery_id},
     ).fetchone()
-    
+
     if not row:
         return False
-    
-    webhook_id, event_id, event_type, payload_json, attempts, url, secret = row
+
+    _, webhook_id, event_id, event_type, payload_json, attempts, _, event_timestamp, url, secret = row
     payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+
+    current_attempt = attempts + 1
+    db.execute(
+        text("UPDATE webhook_deliveries SET status = 'delivering', attempts = :attempts WHERE id = :id"),
+        {"id": delivery_id, "attempts": current_attempt},
+    )
+    db.commit()
+
+    timestamp = int(event_timestamp.timestamp()) if isinstance(event_timestamp, datetime) else int(datetime.now(timezone.utc).timestamp())
     
-    # Prepare webhook delivery
-    timestamp = int(datetime.utcnow().timestamp())
-    full_payload = {
+    # Replay protection check
+    try:
+        replay_window = int(os.getenv("ONERING_WEBHOOKS_REPLAY_WINDOW_SECONDS", "300"))
+    except ValueError:
+        replay_window = 300
+    
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if abs(now_ts - timestamp) > replay_window:
+        db.execute(
+            text(
+                """
+                UPDATE webhook_deliveries
+                SET status = 'failed', last_error = 'REPLAY_EXPIRED: event outside replay window'
+                WHERE id = :id
+                """
+            ),
+            {"id": delivery_id},
+        )
+        db.commit()
+        return False
+    
+    body = {
         "event_id": event_id,
         "event_type": event_type,
         "timestamp": timestamp,
         "data": payload,
     }
-    
-    signature = sign_webhook_payload(full_payload, secret, timestamp)
-    
+    body_bytes = _canonical_json_bytes(body)
+    signature = sign_webhook(secret, timestamp, event_id, body_bytes)
+
     headers = {
         "Content-Type": "application/json",
         "X-OneRing-Signature": signature,
@@ -251,85 +306,74 @@ async def deliver_webhook(db: Session, delivery_id: str) -> bool:
         "X-OneRing-Event-ID": event_id,
         "X-OneRing-Timestamp": str(timestamp),
     }
-    
-    # Attempt delivery
+
     try:
         async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT_SECONDS) as client:
-            response = await client.post(url, json=full_payload, headers=headers)
+            response = await client.post(url, content=body_bytes, headers=headers)
+            status_code = response.status_code
             response.raise_for_status()
-        
-        # Success
+
         db.execute(
-            text("""
+            text(
+                """
                 UPDATE webhook_deliveries
-                SET status = 'succeeded', delivered_at = NOW(), attempts = :attempts
-                WHERE id = :delivery_id
-            """),
-            {"delivery_id": delivery_id, "attempts": attempts + 1}
+                SET status = 'succeeded', delivered_at = NOW(), last_status_code = :status_code
+                WHERE id = :id
+                """
+            ),
+            {"id": delivery_id, "status_code": status_code},
         )
-        
-        # Update webhook last_delivered_at
         db.execute(
             text("UPDATE external_webhooks SET last_delivered_at = NOW() WHERE id = :webhook_id"),
-            {"webhook_id": webhook_id}
+            {"webhook_id": webhook_id},
         )
-        
         db.commit()
         return True
-    
-    except Exception as e:
-        # Failure - schedule retry or mark failed
-        attempts += 1
-        
-        if attempts >= MAX_RETRY_ATTEMPTS:
-            # Give up
-            db.execute(
-                text("""
-                    UPDATE webhook_deliveries
-                    SET status = 'failed', attempts = :attempts, last_error = :error
-                    WHERE id = :delivery_id
-                """),
-                {
-                    "delivery_id": delivery_id,
-                    "attempts": attempts,
-                    "error": str(e)[:500],
-                }
-            )
-        else:
-            # Schedule retry
-            retry_delay = RETRY_DELAYS[attempts - 1] if attempts <= len(RETRY_DELAYS) else RETRY_DELAYS[-1]
-            next_retry = datetime.utcnow() + timedelta(seconds=retry_delay)
-            
-            db.execute(
-                text("""
-                    UPDATE webhook_deliveries
-                    SET attempts = :attempts, last_error = :error, next_retry_at = :next_retry
-                    WHERE id = :delivery_id
-                """),
-                {
-                    "delivery_id": delivery_id,
-                    "attempts": attempts,
-                    "error": str(e)[:500],
-                    "next_retry": next_retry,
-                }
-            )
-        
+    except Exception as exc:
+        delay = backoff[min(current_attempt - 1, len(backoff) - 1)]
+        next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
+        status = "dead" if current_attempt >= max_attempts else "pending"
+
+        db.execute(
+            text(
+                """
+                UPDATE webhook_deliveries
+                SET status = :status, last_error = :error, last_status_code = :status_code,
+                    next_attempt_at = :next_attempt
+                WHERE id = :id
+                """
+            ),
+            {
+                "id": delivery_id,
+                "status": status,
+                "error": str(exc)[:500],
+                "status_code": getattr(exc, "status_code", None) or (getattr(exc, "response", None).status_code if getattr(exc, "response", None) else None),
+                "next_attempt": next_attempt if status == "pending" else None,
+            },
+        )
         db.commit()
         return False
 
 
 def get_pending_deliveries(db: Session, limit: int = 100) -> List[str]:
-    """Get pending webhook deliveries ready for retry."""
     rows = db.execute(
-        text("""
+        text(
+            """
             SELECT id
             FROM webhook_deliveries
             WHERE status = 'pending'
-            AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-            ORDER BY created_at
+              AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+            ORDER BY next_attempt_at NULLS FIRST, created_at
             LIMIT :limit
-        """),
-        {"limit": limit}
+            """
+        ),
+        {"limit": limit},
     ).fetchall()
-    
     return [str(row[0]) for row in rows]
+
+
+# Backwards-compatible helper name used in earlier tests
+def emit_webhook_event(db: Session, event_type: str, payload: Dict, user_id: Optional[str] = None) -> int:
+    """Alias for enqueue_webhook_event; returns delivery count for compatibility."""
+    _, count = enqueue_webhook_event(db, event_type=event_type, payload=payload, user_id=user_id)
+    return count

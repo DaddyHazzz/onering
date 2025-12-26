@@ -329,25 +329,29 @@ backend/
 **Decision:** `.ai/` is the single source of truth for all documentation. `docs/` is legacy compatibility only.
 
 **Rules:**
-- All canonical docs live in `.ai/`
-- `docs/` files are stubs pointing to `.ai/` counterparts
-- Historical phase artifacts (PHASE*.md) live only in `.ai/PHASES/COMPLETED/`
-- No shell-based doc manipulation allowed (prevents accidental merges, duplicates)
-- All doc migrations must be manual and explicitly reviewed
 
 **Rationale:**
-- Centralized reduces duplication and merge conflicts
-- Stubs prevent accidental edits to wrong files
-- Historical archives remain queryable but out of the way
-- Manual migrations enforce intentionality
 
 **See:**
-- [.ai/](../ai/) — All canonical docs
-- [.ai/PHASES/COMPLETED/](../ai/PHASES/COMPLETED/) — Historical phase reports
-- [docs/](../docs/) — Stubs and legacy compatibility only
 
----
 
+## Phase 10.1 — Agent Enforcement Decisions (Append-Only)
+
+- SLA: Target p90 <2s end-to-end for enforced agent chain; measured via per-agent telemetry (workflow_id with start/end ms). Staging must meet SLA before enabling enforced mode in production.
+- Circuit Breaker: Trip after 3 consecutive optimizer failures; return writer draft with warning; log `cb_trip` with `workflow_id` and failure reasons.
+- Telemetry Retention: 30 days for agent run events (append-only). Monthly snapshotting allowed; monitor storage and query latency.
+- Observability UX: Hybrid — user-facing summary (workflow_id, status, key warnings) in dashboard; admin-only full trace in `/monitoring`.
+- Feature Flags: `AGENT_ENFORCEMENT_ENABLED` (default OFF), `AGENT_ENFORCEMENT_MODE=off|advisory|enforced`, `QA_BLOCKING_ENABLED`.
+  - Rollout: OFF → advisory (≥72h stable, telemetry coverage ≥95%) → enforced (p90 <2s, security-reviewed QA rules).
+  - Kill-switch: Instant revert to OFF required; rollback path documented.
+- Invariants: QA agent is sole blocker; all agent steps emit workflow_id and timings; backend owns all LLM access (no frontend → Groq direct calls); errors include `suggestedFix` when actionable.
+
+## Phase 10.1 Enforcement: Canonical Contracts (Append-Only)
+- Env vars (canonical): `ONERING_ENFORCEMENT_MODE` (default `off`), `ONERING_AUDIT_LOG` (default `"1"`), `ONERING_TOKEN_ISSUANCE` (default `off`).
+- Enforced-mode requirement: posting must validate a server-side QA receipt keyed by `request_id` with `QA` status `PASS` and `audit_ok=true`; client-only payloads insufficient.
+- Status casing: canonical `PASS`/`FAIL` for decisions and `qa_summary` in SSE and receipts.
+- Required payload fields for enforcement event/receipt: `request_id`, `mode`, `decisions[]`, `qa_summary`, `would_block`, `required_edits`, `audit_ok`; `warnings` optional.
+- No runtime table creation on request path; migrations for `audit_agent_decisions` must be applied ahead of rollout; fail-open only in advisory, fail-closed rules documented for enforced.
 ## 12. Agent Operational Safety & Hooks Policy
 
 **Decision:** Hooks are DISABLED by default. Tests run only when explicitly enabled via environment variables.

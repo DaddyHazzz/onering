@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
+import { applyLedgerSpend, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const stakeSchema = z.object({
   amount: z.number().int().positive("Amount must be positive"),
@@ -31,12 +32,27 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Check balance
-    if (dbUser.ringBalance < amount) {
-      return Response.json(
-        { error: `Insufficient RING. Need ${amount}, have ${dbUser.ringBalance}` },
-        { status: 400 }
-      );
+    const mode = getTokenIssuanceMode();
+    if (mode === "off") {
+      if (dbUser.ringBalance < amount) {
+        return Response.json(
+          { error: `Insufficient RING. Need ${amount}, have ${dbUser.ringBalance}` },
+          { status: 400 }
+        );
+      }
+    } else {
+      const spend = await applyLedgerSpend({
+        userId,
+        amount,
+        reasonCode: "stake",
+        metadata: { duration_days: durationDays, apr },
+      });
+      if (!spend.ok) {
+        return Response.json(
+          { error: "Stake blocked", code: spend.error || "LEGACY_RING_WRITE_BLOCKED" },
+          { status: 400 }
+        );
+      }
     }
 
     // Create staking position
@@ -50,13 +66,15 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Deduct from balance
-    await prisma.user.update({
-      where: { id: dbUser.id },
-      data: {
-        ringBalance: { decrement: amount },
-      },
-    });
+    if (mode === "off") {
+      // Deduct from balance (legacy off mode only)
+      await prisma.user.update({
+        where: { id: dbUser.id },
+        data: {
+          ringBalance: { decrement: amount },
+        },
+      });
+    }
 
     const dailyYield = (amount * apr) / 365;
     const totalYield = dailyYield * durationDays;

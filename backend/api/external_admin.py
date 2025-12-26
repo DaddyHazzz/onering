@@ -14,6 +14,7 @@ from backend.features.external.api_keys import (
     create_api_key,
     revoke_api_key,
     list_api_keys,
+    rotate_api_key,
     VALID_SCOPES,
     RATE_LIMIT_TIERS,
 )
@@ -35,6 +36,7 @@ class CreateApiKeyRequest(BaseModel):
     scopes: List[str]
     tier: str = "free"
     expires_in_days: Optional[int] = None
+    ip_allowlist: Optional[List[str]] = None
 
 
 class CreateApiKeyResponse(BaseModel):
@@ -44,6 +46,7 @@ class CreateApiKeyResponse(BaseModel):
     scopes: List[str]
     tier: str
     expires_at: Optional[str]
+    ip_allowlist: List[str]
 
 
 @router.post("/keys", response_model=CreateApiKeyResponse)
@@ -74,6 +77,7 @@ async def create_external_api_key(
         scopes=request.scopes,
         tier=request.tier,
         expires_in_days=request.expires_in_days,
+        ip_allowlist=request.ip_allowlist,
     )
     
     return CreateApiKeyResponse(**key_info)
@@ -82,6 +86,22 @@ async def create_external_api_key(
 class RevokeApiKeyResponse(BaseModel):
     success: bool
     message: str
+
+
+class RotateApiKeyRequest(BaseModel):
+    preserve_key_id: bool = True
+    ip_allowlist: Optional[List[str]] = None
+    expires_in_days: Optional[int] = None
+
+
+class RotateApiKeyResponse(BaseModel):
+    key_id: str
+    full_key: str  # Only shown once!
+    owner_user_id: str
+    scopes: List[str]
+    tier: str
+    expires_at: Optional[str]
+    ip_allowlist: List[str]
 
 
 @router.post("/keys/{key_id}/revoke", response_model=RevokeApiKeyResponse)
@@ -102,6 +122,36 @@ async def revoke_external_api_key(
     )
 
 
+@router.post("/keys/{key_id}/rotate", response_model=RotateApiKeyResponse)
+async def rotate_external_api_key(
+    key_id: str,
+    request: RotateApiKeyRequest,
+    admin: AdminActor = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Rotate external API key (optionally preserving key_id)."""
+    rotated = rotate_api_key(
+        db,
+        key_id,
+        preserve_key_id=request.preserve_key_id,
+        ip_allowlist=request.ip_allowlist,
+        expires_in_days=request.expires_in_days,
+    )
+
+    if not rotated:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    return RotateApiKeyResponse(
+        key_id=rotated["key_id"],
+        full_key=rotated["full_key"],
+        owner_user_id=rotated["owner_user_id"],
+        scopes=rotated["scopes"],
+        tier=rotated["tier"],
+        expires_at=rotated["expires_at"].isoformat() if rotated.get("expires_at") else None,
+        ip_allowlist=rotated.get("ip_allowlist", []),
+    )
+
+
 class ApiKeyListItem(BaseModel):
     id: str
     key_id: str
@@ -111,10 +161,27 @@ class ApiKeyListItem(BaseModel):
     created_at: str
     last_used_at: Optional[str]
     expires_at: Optional[str]
+    ip_allowlist: List[str]
 
 
 class ListApiKeysResponse(BaseModel):
     keys: List[ApiKeyListItem]
+
+
+class RotateApiKeyRequest(BaseModel):
+    preserve_key_id: bool = True
+    ip_allowlist: Optional[List[str]] = None
+    expires_in_days: Optional[int] = None
+
+
+class RotateApiKeyResponse(BaseModel):
+    key_id: str
+    full_key: str
+    owner_user_id: str
+    scopes: List[str]
+    tier: str
+    expires_at: Optional[str]
+    ip_allowlist: List[str]
 
 
 @router.get("/keys/{owner_user_id}", response_model=ListApiKeysResponse)
