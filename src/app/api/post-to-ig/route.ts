@@ -4,6 +4,7 @@ import { z } from "zod";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
 import Redis from "ioredis";
 import { prisma } from "@/lib/db";
+import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   content: z.string().min(1),
@@ -178,6 +179,9 @@ export async function POST(req: NextRequest) {
       return failure(result.error || "Failed to post to Instagram", 500);
     }
 
+    const tokenMode = getTokenIssuanceMode();
+    const ringAward = 50;
+
     // Award RING on success
     try {
       let dbUser = await prisma.user.findUnique({
@@ -188,16 +192,28 @@ export async function POST(req: NextRequest) {
         dbUser = await prisma.user.create({
           data: {
             clerkId: userId,
-            ringBalance: 50,
+            ringBalance: tokenMode === "off" ? ringAward : 0,
           },
         });
-      } else {
+      } else if (tokenMode === "off") {
         dbUser = await prisma.user.update({
           where: { id: dbUser.id },
           data: {
-            ringBalance: { increment: 50 },
+            ringBalance: { increment: ringAward },
           },
         });
+      }
+
+      if (tokenMode !== "off") {
+        const earned = await applyLedgerEarn({
+          userId,
+          amount: ringAward,
+          reasonCode: "social_post:ig",
+          metadata: { externalId: result.id },
+        });
+        if (!earned.ok) {
+          console.warn("[post-to-ig] ledger earn blocked:", earned.error);
+        }
       }
 
       // Create post record
@@ -207,31 +223,33 @@ export async function POST(req: NextRequest) {
           platform: "IG",
           content: content.slice(0, 280),
           externalId: result.id,
-          ringEarned: 50,
+          ringEarned: tokenMode === "off" ? ringAward : ringAward,
           status: "published",
         },
       });
 
       console.log("[post-to-ig] recorded post in DB for user:", dbUser.id);
 
-      // Sync to Clerk metadata
-      try {
-        const user = await clerkClient.users.getUser(userId);
-        const meta = (user.publicMetadata || {}) as any;
-        const posts = Array.isArray(meta.posts) ? meta.posts : [];
-        const postObj = {
-          id: result.id,
-          platform: "IG",
-          content: content.slice(0, 280),
-          time: new Date().toISOString(),
-          ringEarned: 50,
-        };
-        posts.unshift(postObj);
-        const newMeta = { ...meta, posts, ring: dbUser.ringBalance };
-        await clerkClient.users.updateUser(userId, { publicMetadata: newMeta });
-        console.log("[post-to-ig] synced Clerk metadata");
-      } catch (clerkErr: any) {
-        console.warn("[post-to-ig] failed to sync Clerk metadata:", clerkErr.message);
+      // Sync to Clerk metadata (legacy only; ledger mode uses async sync)
+      if (tokenMode === "off") {
+        try {
+          const user = await clerkClient.users.getUser(userId);
+          const meta = (user.publicMetadata || {}) as any;
+          const posts = Array.isArray(meta.posts) ? meta.posts : [];
+          const postObj = {
+            id: result.id,
+            platform: "IG",
+            content: content.slice(0, 280),
+            time: new Date().toISOString(),
+            ringEarned: ringAward,
+          };
+          posts.unshift(postObj);
+          const newMeta = { ...meta, posts, ring: dbUser.ringBalance };
+          await clerkClient.users.updateUser(userId, { publicMetadata: newMeta });
+          console.log("[post-to-ig] synced Clerk metadata");
+        } catch (clerkErr: any) {
+          console.warn("[post-to-ig] failed to sync Clerk metadata:", clerkErr.message);
+        }
       }
     } catch (dbErr: any) {
       console.error("[post-to-ig] database error:", dbErr);
