@@ -15,7 +15,8 @@ from dotenv import load_dotenv
 
 # Load env from backend/.env
 backend_dir = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(dotenv_path=os.path.join(backend_dir, '.env'))
+if "PYTEST_CURRENT_TEST" not in os.environ:
+    load_dotenv(dotenv_path=os.path.join(backend_dir, ".env"))
 
 # Add backend to path for imports
 sys.path.insert(0, backend_dir)

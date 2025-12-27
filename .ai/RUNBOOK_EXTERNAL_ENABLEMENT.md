@@ -159,6 +159,67 @@ All flags enabled. Monitor continuously.
 
 ---
 
+## 🔥 Smoke Testing
+
+### Automated Smoke Test
+Before any enablement stage, run the smoke test suite:
+
+**Windows (PowerShell):**
+```powershell
+.\tools\run_external_smoke.ps1 -AdminKey "your_admin_key"
+```
+
+**Unix/Mac (Bash):**
+```bash
+./tools/run_external_smoke.sh
+```
+
+### What Smoke Tests Validate
+1. ✓ Backend API is reachable
+2. ✓ External API endpoints respond correctly
+3. ✓ Rate limiting works (headers present)
+4. ✓ Authentication enforces permissions
+5. ✓ Canary mode rejects non-canary keys (if enabled)
+6. ✓ Webhook signing HMAC is correct
+7. ✓ Replay protection rejects old events
+8. ✓ Delivery worker processes events
+
+### Manual Verification
+```bash
+# Check External API health
+curl http://localhost:8000/v1/external/me \
+  -H "Authorization: Bearer $API_KEY"
+
+# Verify rate limit headers
+curl -v http://localhost:8000/v1/external/rings \
+  -H "Authorization: Bearer $API_KEY" 2>&1 | grep -i "X-RateLimit"
+
+# Test webhook delivery
+curl -X POST http://localhost:8000/v1/admin/external/webhooks \
+  -H "X-Admin-Key: $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "owner_user_id": "user_test",
+    "url": "https://webhook.site/your_id",
+    "events": ["draft.published"]
+  }'
+
+# Monitor metrics
+curl http://localhost:8000/v1/monitoring/external/metrics \
+  -H "X-Admin-Key: $ADMIN_KEY"
+```
+
+### Troubleshooting
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| 403 CANARY_ONLY_MODE | Non-canary key used in canary-only mode | Use canary key or disable `ONERING_EXTERNAL_API_CANARY_ONLY` |
+| 429 Too Many Requests | Rate limit exceeded | Wait for window reset or use different key |
+| 401 Unauthorized | Missing/invalid API key | Verify key in auth header |
+| Webhook not delivered | Worker not running | Start: `python -m backend.workers.webhook_delivery --loop` |
+| HMAC signature invalid | Secret mismatch | Verify webhook secret in request header |
+
+---
+
 ## 🎚️ Canary Mode Specifics
 
 ### What is Canary Mode?

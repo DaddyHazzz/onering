@@ -143,6 +143,28 @@ export default function ExternalMonitoringPage() {
           </div>
         </header>
 
+        {/* Global Canary Status */}
+        <section className="bg-gradient-to-r from-blue-900/30 to-cyan-900/30 border border-cyan-700/50 rounded-xl p-4">
+          <div className="grid md:grid-cols-4 gap-4">
+            <div className="space-y-1">
+              <div className="text-xs font-mono text-cyan-300">ONERING_EXTERNAL_API_ENABLED</div>
+              <div className="text-xl font-bold text-emerald-300">✓ Active</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs font-mono text-cyan-300">ONERING_WEBHOOKS_ENABLED</div>
+              <div className="text-xl font-bold text-emerald-300">✓ Active</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs font-mono text-cyan-300">ONERING_WEBHOOKS_DELIVERY_ENABLED</div>
+              <div className="text-xl font-bold text-emerald-300">✓ Active</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs font-mono text-cyan-300">ONERING_EXTERNAL_API_CANARY_ONLY</div>
+              <div className="text-xl font-bold text-yellow-300">⚠ Canary Mode</div>
+            </div>
+          </div>
+        </section>
+
         {lastRefresh && (
           <div className="text-xs text-slate-500">Last updated: {lastRefresh.toLocaleTimeString()}</div>
         )}
@@ -164,6 +186,54 @@ export default function ExternalMonitoringPage() {
           />
           <p className="text-xs text-slate-500">Required for all monitoring data. Set ONERING_ADMIN_KEY in backend env.</p>
         </div>
+
+        {/* Curl Command Examples */}
+        <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-4">
+          <h3 className="text-lg font-bold">API Verification Commands</h3>
+          <p className="text-sm text-slate-400">Copy and run these curl commands to verify External API is working:</p>
+          <div className="space-y-3">
+            {[
+              {
+                label: "Check whoami",
+                cmd: `curl -X GET http://localhost:8000/v1/external/me \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "X-Canary-Mode: true"`,
+              },
+              {
+                label: "Get RING balance",
+                cmd: `curl -X GET http://localhost:8000/v1/external/rings \\
+  -H "Authorization: Bearer YOUR_API_KEY"`,
+              },
+              {
+                label: "Create webhook (admin)",
+                cmd: `curl -X POST http://localhost:8000/v1/admin/external/webhooks \\
+  -H "X-Admin-Key: YOUR_ADMIN_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "owner_user_id": "user_xyz",
+    "url": "https://example.com/webhook",
+    "events": ["draft.published"]
+  }'`,
+              },
+            ].map((item, idx) => (
+              <div key={idx} className="border border-slate-700 rounded-lg p-3 bg-slate-950/50">
+                <div className="text-sm font-mono text-slate-300 mb-2">{item.label}</div>
+                <div className="bg-slate-950 rounded px-2 py-1 border border-slate-800 overflow-x-auto mb-2">
+                  <pre className="text-xs text-slate-400">{item.cmd}</pre>
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(item.cmd);
+                    alert("Copied to clipboard!");
+                  }}
+                  className="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded"
+                >
+                  📋 Copy
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {/* External API Keys Section */}
         <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-4">

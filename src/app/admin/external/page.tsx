@@ -14,6 +14,7 @@ export default function AdminExternalPage() {
   const [tier, setTier] = useState("free");
   const [expiresInDays, setExpiresInDays] = useState<string>("");
   const [ipAllowlist, setIpAllowlist] = useState<string>("");
+  const [canaryEnabled, setCanaryEnabled] = useState(false);
   const [createResult, setCreateResult] = useState<any>(null);
   const [rotateResult, setRotateResult] = useState<any>(null);
   const [listKeys, setListKeys] = useState<any[]>([]);
@@ -59,6 +60,7 @@ export default function AdminExternalPage() {
         owner_user_id: ownerUserId,
         scopes: selectedScopes,
         tier,
+        canary_enabled: canaryEnabled,
         expires_in_days: expiresInDays ? Number(expiresInDays) : undefined,
         ip_allowlist: parseAllowlist(),
       }),
@@ -200,6 +202,14 @@ export default function AdminExternalPage() {
               value={expiresInDays}
               onChange={(e) => setExpiresInDays(e.target.value)}
             />
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={canaryEnabled}
+                onChange={(e) => setCanaryEnabled(e.target.checked)}
+              />
+              <span className="font-semibold">🛡️ Canary Key (10 req/hr limit)</span>
+            </label>
             <textarea
               className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2"
               placeholder="IP allowlist (comma or newline separated)"
