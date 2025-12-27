@@ -12,6 +12,7 @@
 
 ## Root Cause
 - A real webhook secret was committed in documentation as an example value.
+- First known commit containing the value: `f598fce`.
 
 ## Impact
 - Potential exposure of Stripe webhook signing secret.
@@ -31,4 +32,4 @@
 
 ## Follow-ups
 - Ensure all environments are updated to the rotated secret.
-- Reinforce “no secrets in git” training and reviews.
+- Reinforce "no secrets in git" training and reviews.
