@@ -18,10 +18,15 @@
 | **Open questions?** | [OPEN_QUESTIONS_AND_TODOS.md](OPEN_QUESTIONS_AND_TODOS.md) | Unresolved decisions + tech debt |
 | **Phase 10 plan?** | [PHASE_10_MASTER_PLAN.md](PHASE_10_MASTER_PLAN.md) | Comprehensive Phase 10 execution plan |
 | **Phase history** | [PHASES/](PHASES/) | Active specs + archives in PHASES/COMPLETED |
+| **Phase 10.3 Ops** | [RUNBOOK_EXTERNAL_ENABLEMENT.md](RUNBOOK_EXTERNAL_ENABLEMENT.md) | External API production rollout |
+| **Phase 10.3 Details** | [PHASE_10_3_EXTERNAL_PLATFORM.md](PHASE_10_3_EXTERNAL_PLATFORM.md) | Complete technical spec + threat model |
+| **Phase 10.3 Checklist** | [PHASE_10_3_ENABLEMENT_CHECKLIST.md](PHASE_10_3_ENABLEMENT_CHECKLIST.md) | Staged rollout checklist |
+| **Developer Guides** | [EXTERNAL_API_CONSUMER_GUIDE.md](EXTERNAL_API_CONSUMER_GUIDE.md) | Third-party API integration |
 | **Agent system** | [AGENTS_OVERVIEW.md](AGENTS_OVERVIEW.md) | Strategy, Research, Writer, QA agents + more |
 | **Agent tasks** | [TASKS.md](TASKS.md) | Fast tasks vs. agent delegations |
 | **Agent template** | [AGENT_BRIEF.md](AGENT_BRIEF.md) | How to brief a background agent |
 | **Session handoff** | [HANDOFF_PACK/README.md](HANDOFF_PACK/README.md) | 20 critical docs to start sessions |
+| **Security Policy** | [SECURITY_SECRETS_POLICY.md](SECURITY_SECRETS_POLICY.md) | No secrets in git, rotation procedures |
 
 ## Structure
 

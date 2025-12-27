@@ -231,7 +231,7 @@ import json
 import time
 
 payload = {"event": "ring.earned", "data": {"amount": 10}}
-secret = "whsec_3a7f..."
+secret = "whsec_REDACTED"
 timestamp = int(time.time())
 
 # Add timestamp to payload

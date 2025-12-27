@@ -161,6 +161,11 @@ Last Updated: December 25, 2025
 
   ### Webhook Signature Verification (Phase 10.3)
 
+  **CRITICAL SECURITY NOTE:** The webhook secret (`whsec_*`) is **NEVER stored in git**. It is:
+  - Set only via environment variables in production (GitHub Secrets)
+  - Generated fresh in Stripe Dashboard and copied to `.env` (git-ignored) for local development
+  - Rotated immediately if accidentally exposed (see [SECURITY_SECRETS_POLICY.md](SECURITY_SECRETS_POLICY.md))
+
   Webhooks are signed with HMAC-SHA256 over `timestamp.event_id.raw_body_bytes`. Verify using:
 
   ```python
