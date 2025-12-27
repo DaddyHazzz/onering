@@ -43,6 +43,29 @@ def db_session():
     """Get database session."""
     db = next(get_db())
     try:
+        db.execute(
+            text("ALTER TABLE external_api_keys ADD COLUMN IF NOT EXISTS ip_allowlist TEXT[] NOT NULL DEFAULT '{}'::TEXT[]")
+        )
+        db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS webhook_events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    event_type TEXT NOT NULL,
+                    user_id TEXT NULL,
+                    payload JSONB NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        db.execute(
+            text("ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ")
+        )
+        db.execute(
+            text("ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS event_timestamp TIMESTAMPTZ")
+        )
+        db.commit()
         yield db
     finally:
         db.close()
@@ -238,7 +261,7 @@ class TestRateLimiting:
         )
         
         # First request should be allowed
-        allowed, current, limit = check_rate_limit(db_session, created["key_id"], "free")
+        allowed, current, limit, _ = check_rate_limit(db_session, created["key_id"], "free")
         assert allowed is True
         assert current == 1
         assert limit == 100
@@ -264,7 +287,7 @@ class TestRateLimiting:
         db_session.commit()
         
         # Next request should be blocked
-        allowed, current, limit = check_rate_limit(db_session, created["key_id"], "free")
+        allowed, current, limit, _ = check_rate_limit(db_session, created["key_id"], "free")
         assert allowed is False
         assert current == 100
         assert limit == 100

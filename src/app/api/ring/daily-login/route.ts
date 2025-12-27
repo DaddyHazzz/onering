@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-handler";
-import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, getEffectiveRingBalance, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const DAILY_LOGIN_BONUS = 10;
 
@@ -45,10 +45,11 @@ export async function POST(req: NextRequest) {
         });
       }
       console.log("[ring/daily-login] created user with first login bonus:", user.id);
+      const summary = await getEffectiveRingBalance(userId);
       return Response.json({
         success: true,
         ringEarned: DAILY_LOGIN_BONUS,
-        newBalance: user.ringBalance,
+        newBalance: summary.effectiveBalance,
         message: "First login! +10 RING",
       });
     }
@@ -60,10 +61,11 @@ export async function POST(req: NextRequest) {
 
     if (!isNewDay) {
       console.log("[ring/daily-login] user already claimed today:", userId);
+      const summary = await getEffectiveRingBalance(userId);
       return Response.json({
         success: false,
         message: "Already claimed daily bonus today",
-        newBalance: user.ringBalance,
+        newBalance: summary.effectiveBalance,
       });
     }
 
@@ -91,10 +93,11 @@ export async function POST(req: NextRequest) {
 
     console.log("[ring/daily-login] awarded daily bonus:", userId, { bonus: DAILY_LOGIN_BONUS, newBalance: user.ringBalance });
 
+    const summary = await getEffectiveRingBalance(userId);
     return Response.json({
       success: true,
       ringEarned: DAILY_LOGIN_BONUS,
-        newBalance: user.ringBalance,
+      newBalance: summary.effectiveBalance,
       message: "Daily login bonus! +10 RING",
     });
   } catch (error: any) {

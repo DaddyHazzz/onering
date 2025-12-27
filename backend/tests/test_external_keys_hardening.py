@@ -1,5 +1,6 @@
 """Tests for external API key rotation and IP allowlist enforcement."""
 import pytest
+from sqlalchemy import text
 from backend.features.external.api_keys import (
     create_api_key,
     validate_api_key,
@@ -12,7 +13,18 @@ from backend.core.database import get_db
 @pytest.fixture
 def db():
     """Get test database session."""
-    return next(get_db())
+    session = next(get_db())
+    session.execute(
+        text("ALTER TABLE external_api_keys ADD COLUMN IF NOT EXISTS ip_allowlist TEXT[] NOT NULL DEFAULT '{}'::TEXT[]")
+    )
+    session.execute(
+        text("ALTER TABLE external_api_keys ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMPTZ NULL")
+    )
+    session.commit()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def test_api_key_creation_with_ip_allowlist(db):

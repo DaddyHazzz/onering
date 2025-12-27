@@ -54,6 +54,7 @@ def run_reconciliation(db: Session) -> Dict:
     publish_missing = []
     publish_duplicates = []
     
+    max_amount = 2_000_000_000
     for user_id in user_ids:
         # Sum ledger entries
         ledger_result = db.execute(
@@ -78,6 +79,10 @@ def run_reconciliation(db: Session) -> Dict:
                 "difference": ledger_sum - current_balance,
             }
             mismatches.append(mismatch)
+
+            if abs(ledger_sum) > max_amount or abs(ledger_sum - current_balance) > max_amount:
+                mismatch["overflow"] = True
+                continue
             
             # In shadow mode, log adjustment (don't apply)
             if mode == "shadow":

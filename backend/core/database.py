@@ -14,6 +14,7 @@ from sqlalchemy.pool import QueuePool
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql import func
 import os
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from backend.core.config import settings
 
@@ -32,6 +33,41 @@ _engine = None
 _SessionLocal = None
 
 
+def _sanitize_database_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    schema_value = None
+    options_value = None
+    cleaned_items = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key == "schema":
+            schema_value = value
+            continue
+        if key == "options":
+            options_value = value
+            continue
+        cleaned_items.append((key, value))
+
+    if schema_value:
+        search_path = f"-csearch_path={schema_value}"
+        if options_value:
+            if "search_path" not in options_value:
+                options_value = f"{options_value} {search_path}"
+        else:
+            options_value = search_path
+
+    if options_value:
+        cleaned_items.append(("options", options_value))
+
+    new_query = urlencode(cleaned_items, doseq=True)
+    return urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
+    )
+
+
 def get_database_url() -> Optional[str]:
     """
     Get the database URL from settings or environment.
@@ -40,9 +76,9 @@ def get_database_url() -> Optional[str]:
     """
     test_url = os.getenv("TEST_DATABASE_URL")
     if test_url:
-        return test_url
+        return _sanitize_database_url(test_url)
     
-    return settings.DATABASE_URL
+    return _sanitize_database_url(settings.DATABASE_URL)
 
 
 def init_engine(database_url: Optional[str] = None):

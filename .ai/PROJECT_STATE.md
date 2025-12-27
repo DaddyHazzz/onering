@@ -328,7 +328,7 @@ Make OneRing defensible by enforcing agent workflows, activating minimal token e
 - **Key Changes:** RING deductions (-10 for failed posts), 1% monthly decay (>10K holdings), 1M lifetime cap, audit trail (PostgreSQL)
 - **Success Criteria:** Audit reconciliation passes, <1% gaming attempts, sybil detection logging warnings
 - **Entry Criteria:** 10.1 complete, agent telemetry logging RING awards
- - **Status:** Publish-integrated (publish_events -> enforcement receipt -> ledger/pending) with monitoring surfaced
+ - **Status:** Publish-integrated (publish_events -> enforcement receipt -> ledger/pending); ledger-as-truth summary endpoint + clerk sync worker + backfill validator shipped
 
 - **Exit Criteria:** 720+ backend tests passing, daily audit job operational
 

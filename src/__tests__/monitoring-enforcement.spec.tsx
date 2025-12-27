@@ -72,6 +72,8 @@ describe("MonitoringPage enforcement panel", () => {
         token_issued_amount: 10,
         token_reason_code: "ISSUED",
         created_at: "2025-12-26T00:10:00Z",
+        last_clerk_sync_at: "2025-12-26T00:05:00Z",
+        last_clerk_sync_error: null,
       },
     ],
   };
@@ -84,6 +86,9 @@ describe("MonitoringPage enforcement panel", () => {
       blocked_issuance: 1,
       top_reason_codes: { ISSUED: 1, PENDING: 1 },
       p90_issuance_latency_ms: 150,
+      reconciliation_mismatches: 2,
+      clerk_sync_failures_24h: 1,
+      idempotency_conflicts_24h: 3,
     },
   };
 
@@ -147,6 +152,8 @@ describe("MonitoringPage enforcement panel", () => {
     expect(screen.getByText("Token Monitoring")).toBeInTheDocument();
     expect(await screen.findByText("evt-1")).toBeInTheDocument();
     expect(screen.getAllByTestId("copy-event-id").length).toBeGreaterThanOrEqual(1);
+    const clerkCard = screen.getByText("Clerk Sync Failures (24h)").parentElement as HTMLElement;
+    expect(within(clerkCard).getByText("1")).toBeInTheDocument();
   });
 
   it("filters by status, mode, and request id", async () => {

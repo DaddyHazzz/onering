@@ -15,6 +15,7 @@ Phase 10.2 implements a **canonical token accounting system** for $RING with sha
 - ✅ **Canonical Ledger:** Append-only `ring_ledger` table with immutable entries
 - ✅ **Shadow Mode:** Logs pending rewards without touching balances (`ring_pending` table)
 - ✅ **Live Mode:** Atomically updates balances + appends ledger entries
+- ✅ **Ledger-as-Truth:** Canonical balance resolved from ledger/pending with `/v1/tokens/summary/{user_id}`
 - ✅ **Anti-Gaming Guardrails:** Daily cap, min interval, anomaly detection (3 enforced rules)
 - ✅ **Reconciliation Job:** Daily mismatch detection with automatic ADJUSTMENT entries
 - ✅ **API Endpoints:** Balance, ledger, reconcile endpoints at `/v1/tokens/*`
@@ -227,13 +228,35 @@ Returns user's token balance and pending rewards.
 {
   "balance": 450,
   "pending": 120,
-  "mode": "shadow"
+  "mode": "shadow",
+  "effective_balance": 570
 }
 ```
 
 - `balance`: Current `users.ringBalance` (0 in shadow mode)
 - `pending`: Sum of `ring_pending` entries (shadow mode only)
 - `mode`: Current issuance mode
+
+### GET `/v1/tokens/summary/{user_id}`
+
+Canonical balance summary (ledger-first).
+
+**Response:**
+
+```json
+{
+  "userId": "user_123",
+  "mode": "shadow",
+  "balance": 450,
+  "pending_total": 120,
+  "effective_balance": 570,
+  "last_ledger_at": "2025-12-26T10:30:00Z",
+  "last_pending_at": "2025-12-26T10:30:00Z",
+  "guardrails_state": {},
+  "clerk_sync": { "last_at": null, "last_error": null, "last_error_at": null }
+}
+```
+
 
 ### GET `/v1/tokens/ledger/{user_id}`
 
@@ -465,6 +488,14 @@ All token operations log with structured context:
 ```bash
 # Token issuance mode
 ONERING_TOKEN_ISSUANCE=off|shadow|live  # Default: off
+
+# Clerk metadata sync (best-effort, async)
+ONERING_CLERK_SYNC_DRY_RUN=1
+ONERING_CLERK_SYNC_PER_MINUTE=60
+
+# Backfill/validator
+ONERING_LEDGER_BACKFILL_DRY_RUN=1
+ONERING_LEDGER_BACKFILL_START=0
 
 # Guardrail thresholds (future overrides)
 RING_DAILY_EARN_CAP=1000

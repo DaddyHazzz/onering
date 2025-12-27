@@ -7,6 +7,7 @@ import { currentUser, clerkClient } from "@clerk/nextjs/server";
 import Redis from "ioredis";
 import { prisma } from "@/lib/db";
 import { embedThread } from "@/lib/embeddings";
+import { getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
@@ -371,7 +372,7 @@ export async function POST(req: NextRequest) {
 
     // Write to database and update Clerk metadata
     try {
-      const tokenIssuanceMode = process.env.ONERING_TOKEN_ISSUANCE || "off";
+      const tokenIssuanceMode = getTokenIssuanceMode();
       // Ensure user exists in Postgres
       let dbUser = await prisma.user.findUnique({
         where: { clerkId: userId },
@@ -383,7 +384,7 @@ export async function POST(req: NextRequest) {
         dbUser = await prisma.user.create({
           data: {
             clerkId: userId,
-            ringBalance: 50,
+            ringBalance: tokenIssuanceMode === "off" ? 50 : 0,
           },
         });
         console.log("[post-to-x] created new user in DB:", dbUser.id);
@@ -406,7 +407,7 @@ export async function POST(req: NextRequest) {
         tokenResult = publishResult.token_result;
       } else {
         tokenResult = {
-          mode: process.env.ONERING_TOKEN_ISSUANCE || "off",
+          mode: tokenIssuanceMode,
           issued_amount: 0,
           pending_amount: 0,
           reason_code: "TOKEN_ISSUANCE_FAILED",
@@ -468,27 +469,29 @@ export async function POST(req: NextRequest) {
 
       console.log("[post-to-x] recorded post in DB for user:", dbUser.id, { ringBalance: dbUser.ringBalance, ringEarned });
 
-      // Also sync to Clerk metadata for fallback
-      try {
-        const clerk = await clerkClient();
-        const user = await clerk.users.getUser(userId);
-        const meta = (user.publicMetadata || {}) as any;
-        const posts = Array.isArray(meta.posts) ? meta.posts : [];
-        const postObj = {
-          id: previousTweetId,
-          platform: "X",
-          content: content.slice(0, 280),
-          time: new Date().toISOString(),
-          views: Math.floor(Math.random() * 1000),
-          likes: Math.floor(Math.random() * 200),
-          ringEarned,
-        };
-        posts.unshift(postObj);
-        const newMeta = { ...meta, posts, ring: dbUser.ringBalance };
-        await clerk.users.updateUser(userId, { publicMetadata: newMeta });
-        console.log("[post-to-x] synced Clerk metadata for", userId);
-      } catch (clerkErr: any) {
-        console.warn("[post-to-x] failed to sync Clerk metadata:", clerkErr.message);
+      // Also sync to Clerk metadata for fallback (legacy only)
+      if (tokenMode === "off") {
+        try {
+          const clerk = await clerkClient();
+          const user = await clerk.users.getUser(userId);
+          const meta = (user.publicMetadata || {}) as any;
+          const posts = Array.isArray(meta.posts) ? meta.posts : [];
+          const postObj = {
+            id: previousTweetId,
+            platform: "X",
+            content: content.slice(0, 280),
+            time: new Date().toISOString(),
+            views: Math.floor(Math.random() * 1000),
+            likes: Math.floor(Math.random() * 200),
+            ringEarned,
+          };
+          posts.unshift(postObj);
+          const newMeta = { ...meta, posts, ring: dbUser.ringBalance };
+          await clerk.users.updateUser(userId, { publicMetadata: newMeta });
+          console.log("[post-to-x] synced Clerk metadata for", userId);
+        } catch (clerkErr: any) {
+          console.warn("[post-to-x] failed to sync Clerk metadata:", clerkErr.message);
+        }
       }
     } catch (dbErr: any) {
       console.error("[post-to-x] failed to write to database:", dbErr);

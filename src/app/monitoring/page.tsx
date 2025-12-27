@@ -65,6 +65,8 @@ interface TokenRecord {
   token_pending_id?: string | null;
   issuance_latency_ms?: number | null;
   created_at?: string | null;
+  last_clerk_sync_at?: string | null;
+  last_clerk_sync_error?: string | null;
 }
 
 interface TokenMetrics {
@@ -75,6 +77,9 @@ interface TokenMetrics {
     blocked_issuance: number;
     top_reason_codes: Record<string, number>;
     p90_issuance_latency_ms?: number | null;
+    reconciliation_mismatches?: number | null;
+    clerk_sync_failures_24h?: number | null;
+    idempotency_conflicts_24h?: number | null;
   };
 }
 
@@ -464,6 +469,18 @@ export default function MonitoringPage() {
                 {tokenMetrics?.metrics.p90_issuance_latency_ms ?? "N/A"}
               </div>
             </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">Reconciliation Mismatches (24h)</div>
+              <div className="text-2xl font-bold">{tokenMetrics?.metrics.reconciliation_mismatches ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">Clerk Sync Failures (24h)</div>
+              <div className="text-2xl font-bold">{tokenMetrics?.metrics.clerk_sync_failures_24h ?? 0}</div>
+            </div>
+            <div className="bg-black/40 rounded-xl p-4 border border-white/10">
+              <div className="text-sm text-gray-400">Idempotency Conflicts (24h)</div>
+              <div className="text-2xl font-bold">{tokenMetrics?.metrics.idempotency_conflicts_24h ?? 0}</div>
+            </div>
           </div>
 
           <div className="mb-6">
@@ -498,6 +515,8 @@ export default function MonitoringPage() {
                     <th className="py-2">Pending</th>
                     <th className="py-2">Issued</th>
                     <th className="py-2">Reason</th>
+                    <th className="py-2">Clerk Sync</th>
+                    <th className="py-2">Clerk Error</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -562,6 +581,12 @@ export default function MonitoringPage() {
                       <td className="py-2 text-xs">{record.token_pending_id || "n/a"}</td>
                       <td className="py-2">{record.token_issued_amount ?? 0}</td>
                       <td className="py-2">{record.token_reason_code || "n/a"}</td>
+                      <td className="py-2 text-xs text-gray-300">
+                        {record.last_clerk_sync_at ? new Date(record.last_clerk_sync_at).toLocaleString() : "n/a"}
+                      </td>
+                      <td className="py-2 text-xs text-red-200">
+                        {record.last_clerk_sync_error || "n/a"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

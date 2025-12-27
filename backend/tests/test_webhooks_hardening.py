@@ -1,7 +1,9 @@
 """Tests for webhook signing, replay protection, and delivery worker."""
 import pytest
+import uuid
 import json
 import asyncio
+import httpx
 from datetime import datetime, timedelta, timezone
 from backend.features.external.webhooks import (
     sign_webhook,
@@ -20,6 +22,21 @@ from sqlalchemy import text
 def db():
     """Get test database session."""
     return next(get_db())
+
+
+class _FakeAsyncClient:
+    def __init__(self, status_code: int):
+        self._status_code = status_code
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, *args, **kwargs):
+        request = httpx.Request("POST", "https://example.com")
+        return httpx.Response(self._status_code, request=request, text="ok")
 
 
 def test_webhook_signing_correctness(db):
@@ -71,16 +88,20 @@ def test_webhook_replay_protection_future_tolerance(db):
     assert is_valid is True
 
 
-def test_enqueue_webhook_event_creates_deliveries(db):
+def test_enqueue_webhook_event_creates_deliveries(db, monkeypatch):
     """Test enqueue_webhook_event creates delivery rows for matching subscriptions."""
+    monkeypatch.setattr("backend.features.external.webhooks.is_webhooks_enabled", lambda: True)
+    user_id = f"user_{uuid.uuid4()}"
     # Create webhook subscription
+    webhook_id = str(uuid.uuid4())
     db.execute(
         text(
             """
             INSERT INTO external_webhooks (id, owner_user_id, url, secret, events, is_active)
-            VALUES ('wh_test1', 'user123', 'https://example.com/webhook', 'whsec_test', ARRAY['draft.published'], true)
+            VALUES (:id, :user_id, 'https://example.com/webhook', 'whsec_test', ARRAY['draft.published'], true)
             """
-        )
+        ),
+        {"id": webhook_id, "user_id": user_id},
     )
     db.commit()
 
@@ -89,10 +110,10 @@ def test_enqueue_webhook_event_creates_deliveries(db):
         db,
         event_type="draft.published",
         payload={"post_id": "post123"},
-        user_id="user123",
+        user_id=user_id,
     )
 
-    assert event_id.startswith("evt_")
+    uuid.UUID(event_id)
     assert delivery_count == 1
 
     # Check delivery was created
@@ -108,85 +129,104 @@ def test_enqueue_webhook_event_creates_deliveries(db):
     ).fetchone()
 
     assert delivery is not None
-    assert delivery[1] == "wh_test1"
+    assert str(delivery[1]) == webhook_id
     assert delivery[2] == event_id
     assert delivery[3] == "pending"
     assert delivery[4] == 0
 
 
 @pytest.mark.asyncio
-async def test_deliver_webhook_success(db):
+async def test_deliver_webhook_success(db, monkeypatch):
     """Test successful webhook delivery marks as succeeded."""
+    monkeypatch.setattr("backend.features.external.webhooks.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient(200))
+    monkeypatch.setattr("backend.features.external.webhooks.is_delivery_enabled", lambda: True)
+    user_id = f"user_{uuid.uuid4()}"
     # Create webhook and event
+    webhook_id = str(uuid.uuid4())
+    event_id = str(uuid.uuid4())
+    delivery_id = str(uuid.uuid4())
     db.execute(
         text(
             """
             INSERT INTO external_webhooks (id, owner_user_id, url, secret, events, is_active)
-            VALUES ('wh_test2', 'user123', 'https://httpbin.org/status/200', 'whsec_test', ARRAY['ring.earned'], true)
+            VALUES (:id, :user_id, 'https://httpbin.org/status/200', 'whsec_test', ARRAY['ring.earned'], true)
             """
-        )
+        ),
+        {"id": webhook_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_events (id, event_type, user_id, payload)
-            VALUES ('evt_test2', 'ring.earned', 'user123', '{"amount": 100}')
+            VALUES (:id, 'ring.earned', :user_id, '{"amount": 100}')
             """
-        )
+        ),
+        {"id": event_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, status, attempts, payload, event_timestamp)
-            VALUES ('delivery_test2', 'wh_test2', 'evt_test2', 'ring.earned', 'pending', 0, '{"amount": 100}', NOW())
+            VALUES (:id, :webhook_id, :event_id, 'ring.earned', 'pending', 0, '{"amount": 100}', NOW())
             """
-        )
+        ),
+        {"id": delivery_id, "webhook_id": webhook_id, "event_id": event_id},
     )
     db.commit()
 
     # Deliver
-    success = await deliver_webhook(db, "delivery_test2")
+    success = await deliver_webhook(db, delivery_id)
     assert success is True
 
     # Check status
     row = db.execute(
-        text("SELECT status, delivered_at FROM webhook_deliveries WHERE id = 'delivery_test2'")
+        text("SELECT status, delivered_at FROM webhook_deliveries WHERE id = :id"),
+        {"id": delivery_id},
     ).fetchone()
     assert row[0] == "succeeded"
     assert row[1] is not None
 
 
 @pytest.mark.asyncio
-async def test_deliver_webhook_retry_backoff(db):
+async def test_deliver_webhook_retry_backoff(db, monkeypatch):
     """Test failed delivery schedules retry with backoff."""
+    monkeypatch.setattr("backend.features.external.webhooks.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient(500))
+    monkeypatch.setattr("backend.features.external.webhooks.is_delivery_enabled", lambda: True)
+    user_id = f"user_{uuid.uuid4()}"
+    webhook_id = str(uuid.uuid4())
+    event_id = str(uuid.uuid4())
+    delivery_id = str(uuid.uuid4())
     db.execute(
         text(
             """
             INSERT INTO external_webhooks (id, owner_user_id, url, secret, events, is_active)
-            VALUES ('wh_test3', 'user123', 'https://httpbin.org/status/500', 'whsec_test', ARRAY['enforcement.failed'], true)
+            VALUES (:id, :user_id, 'https://httpbin.org/status/500', 'whsec_test', ARRAY['enforcement.failed'], true)
             """
-        )
+        ),
+        {"id": webhook_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_events (id, event_type, user_id, payload)
-            VALUES ('evt_test3', 'enforcement.failed', 'user123', '{"reason": "QA_FAIL"}')
+            VALUES (:id, 'enforcement.failed', :user_id, '{"reason": "QA_FAIL"}')
             """
-        )
+        ),
+        {"id": event_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, status, attempts, payload, event_timestamp)
-            VALUES ('delivery_test3', 'wh_test3', 'evt_test3', 'enforcement.failed', 'pending', 0, '{"reason": "QA_FAIL"}', NOW())
+            VALUES (:id, :webhook_id, :event_id, 'enforcement.failed', 'pending', 0, '{"reason": "QA_FAIL"}', NOW())
             """
-        )
+        ),
+        {"id": delivery_id, "webhook_id": webhook_id, "event_id": event_id},
     )
     db.commit()
 
     # Deliver (will fail)
-    success = await deliver_webhook(db, "delivery_test3")
+    success = await deliver_webhook(db, delivery_id)
     assert success is False
 
     # Check retry scheduled
@@ -195,9 +235,10 @@ async def test_deliver_webhook_retry_backoff(db):
             """
             SELECT status, attempts, next_attempt_at, last_error
             FROM webhook_deliveries
-            WHERE id = 'delivery_test3'
+            WHERE id = :id
             """
-        )
+        ),
+        {"id": delivery_id},
     ).fetchone()
 
     assert row[0] == "pending"  # Still pending for retry
@@ -207,41 +248,51 @@ async def test_deliver_webhook_retry_backoff(db):
 
 
 @pytest.mark.asyncio
-async def test_deliver_webhook_dead_after_max_attempts(db):
+async def test_deliver_webhook_dead_after_max_attempts(db, monkeypatch):
     """Test delivery marked dead after max attempts."""
+    monkeypatch.setattr("backend.features.external.webhooks.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient(500))
+    monkeypatch.setattr("backend.features.external.webhooks.is_delivery_enabled", lambda: True)
+    user_id = f"user_{uuid.uuid4()}"
+    webhook_id = str(uuid.uuid4())
+    event_id = str(uuid.uuid4())
+    delivery_id = str(uuid.uuid4())
     db.execute(
         text(
             """
             INSERT INTO external_webhooks (id, owner_user_id, url, secret, events, is_active)
-            VALUES ('wh_test4', 'user123', 'https://httpbin.org/status/500', 'whsec_test', ARRAY['ring.earned'], true)
+            VALUES (:id, :user_id, 'https://httpbin.org/status/500', 'whsec_test', ARRAY['ring.earned'], true)
             """
-        )
+        ),
+        {"id": webhook_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_events (id, event_type, user_id, payload)
-            VALUES ('evt_test4', 'ring.earned', 'user123', '{"amount": 50}')
+            VALUES (:id, 'ring.earned', :user_id, '{"amount": 50}')
             """
-        )
+        ),
+        {"id": event_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, status, attempts, payload, event_timestamp)
-            VALUES ('delivery_test4', 'wh_test4', 'evt_test4', 'ring.earned', 'pending', 2, '{"amount": 50}', NOW())
+            VALUES (:id, :webhook_id, :event_id, 'ring.earned', 'pending', 2, '{"amount": 50}', NOW())
             """
-        )
+        ),
+        {"id": delivery_id, "webhook_id": webhook_id, "event_id": event_id},
     )
     db.commit()
 
     # Deliver (3rd attempt, will fail and mark dead)
-    success = await deliver_webhook(db, "delivery_test4")
+    success = await deliver_webhook(db, delivery_id)
     assert success is False
 
     # Check marked dead
     row = db.execute(
-        text("SELECT status, attempts, next_attempt_at FROM webhook_deliveries WHERE id = 'delivery_test4'")
+        text("SELECT status, attempts, next_attempt_at FROM webhook_deliveries WHERE id = :id"),
+        {"id": delivery_id},
     ).fetchone()
 
     assert row[0] == "dead"
@@ -251,35 +302,44 @@ async def test_deliver_webhook_dead_after_max_attempts(db):
 
 def test_get_pending_deliveries(db):
     """Test get_pending_deliveries returns due deliveries."""
+    user_id = f"user_{uuid.uuid4()}"
     # Insert past-due and future-due deliveries
+    webhook_id = str(uuid.uuid4())
+    event_id_a = str(uuid.uuid4())
+    event_id_b = str(uuid.uuid4())
+    delivery_id_a = str(uuid.uuid4())
+    delivery_id_b = str(uuid.uuid4())
     db.execute(
         text(
             """
             INSERT INTO external_webhooks (id, owner_user_id, url, secret, events, is_active)
-            VALUES ('wh_test5', 'user123', 'https://example.com', 'whsec_test', ARRAY['ring.earned'], true)
+            VALUES (:id, :user_id, 'https://example.com', 'whsec_test', ARRAY['ring.earned'], true)
             """
-        )
+        ),
+        {"id": webhook_id, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_events (id, event_type, user_id, payload)
-            VALUES ('evt_test5a', 'ring.earned', 'user123', '{"amount": 10}'),
-                   ('evt_test5b', 'ring.earned', 'user123', '{"amount": 20}')
+            VALUES (:id_a, 'ring.earned', :user_id, '{"amount": 10}'),
+                   (:id_b, 'ring.earned', :user_id, '{"amount": 20}')
             """
-        )
+        ),
+        {"id_a": event_id_a, "id_b": event_id_b, "user_id": user_id},
     )
     db.execute(
         text(
             """
             INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, status, attempts, payload, next_attempt_at, event_timestamp)
-            VALUES ('delivery_test5a', 'wh_test5', 'evt_test5a', 'ring.earned', 'pending', 0, '{}', NOW() - INTERVAL '1 hour', NOW()),
-                   ('delivery_test5b', 'wh_test5', 'evt_test5b', 'ring.earned', 'pending', 0, '{}', NOW() + INTERVAL '1 hour', NOW())
+            VALUES (:delivery_a, :webhook_id, :event_a, 'ring.earned', 'pending', 0, '{}', NOW() - INTERVAL '1 hour', NOW()),
+                   (:delivery_b, :webhook_id, :event_b, 'ring.earned', 'pending', 0, '{}', NOW() + INTERVAL '1 hour', NOW())
             """
-        )
+        ),
+        {"delivery_a": delivery_id_a, "delivery_b": delivery_id_b, "webhook_id": webhook_id, "event_a": event_id_a, "event_b": event_id_b},
     )
     db.commit()
 
-    pending = get_pending_deliveries(db, limit=10)
-    assert "delivery_test5a" in pending
-    assert "delivery_test5b" not in pending
+    pending = get_pending_deliveries(db, limit=1000)
+    assert delivery_id_a in pending
+    assert delivery_id_b not in pending

@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
-import { applyLedgerEarn, applyLedgerSpend, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, applyLedgerSpend, getEffectiveRingBalance, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   listingId: z.string().min(1),
@@ -119,11 +119,11 @@ export async function POST(req: NextRequest) {
       "RING"
     );
 
+    const summary = await getEffectiveRingBalance(buyerId);
     return Response.json({
       success: true,
       message: `Purchased "${listing.title}" for ${listing.priceRING} RING`,
-      newBuyerBalance: (await prisma.user.findUnique({ where: { id: buyer.id } }))
-        ?.ringBalance,
+      newBuyerBalance: summary.effectiveBalance,
     });
   } catch (error: any) {
     console.error("[market/purchase] error:", error);

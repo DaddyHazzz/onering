@@ -2,6 +2,7 @@
 import Stripe from "stripe";
 import { clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
+import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 // Some @types may narrow allowed apiVersion literals; cast to `any` to avoid
 // a type-level mismatch while still passing the desired string at runtime.
@@ -29,39 +30,55 @@ export async function POST(req: Request) {
       if (clerkId) {
         try {
           // Upsert user in Postgres via Prisma
+          const tokenMode = getTokenIssuanceMode();
+          const ringAward = 500;
           const user = await prisma.user.upsert({
             where: { clerkId },
             update: {
               verified: true,
-              ringBalance: { increment: 500 },
+              ...(tokenMode === "off" ? { ringBalance: { increment: ringAward } } : {}),
             },
             create: {
               clerkId,
               verified: true,
-              ringBalance: 500,
+              ringBalance: tokenMode === "off" ? ringAward : 0,
             },
           });
 
+          if (tokenMode !== "off") {
+            const earned = await applyLedgerEarn({
+              userId: clerkId,
+              amount: ringAward,
+              reasonCode: "stripe_credit",
+              metadata: { event_id: event.id },
+            });
+            if (!earned.ok) {
+              console.warn("[stripe/webhook] ledger earn blocked:", earned.error);
+            }
+          }
+
           console.log('[stripe/webhook] upserted user to DB:', user.id, { ringBalance: user.ringBalance, verified: user.verified });
 
-          // Also update Clerk metadata for fallback/sync
-          try {
-            const client: any = typeof clerkClient === 'function' ? await clerkClient() : clerkClient;
-            const clerkUser = await client.users.getUser(clerkId);
-            const pm: any = (clerkUser?.publicMetadata as any) || {};
-            const processed: string[] = Array.isArray(pm.processedStripeEvents) ? pm.processedStripeEvents : [];
+          // Also update Clerk metadata for fallback/sync (legacy only)
+          if (tokenMode === "off") {
+            try {
+              const client: any = typeof clerkClient === 'function' ? await clerkClient() : clerkClient;
+              const clerkUser = await client.users.getUser(clerkId);
+              const pm: any = (clerkUser?.publicMetadata as any) || {};
+              const processed: string[] = Array.isArray(pm.processedStripeEvents) ? pm.processedStripeEvents : [];
 
-            const newMeta = {
-              ...pm,
-              verified: true,
-              subscription: 'active',
-              ring: user.ringBalance,
-              processedStripeEvents: [...processed, event.id]
-            };
-            await client.users.updateUser(clerkId, { publicMetadata: newMeta });
-            console.log('[stripe/webhook] synced Clerk metadata for', clerkId);
-          } catch (clerkErr: any) {
-            console.warn('[stripe/webhook] failed to sync Clerk metadata:', clerkErr.message);
+              const newMeta = {
+                ...pm,
+                verified: true,
+                subscription: 'active',
+                ring: user.ringBalance,
+                processedStripeEvents: [...processed, event.id]
+              };
+              await client.users.updateUser(clerkId, { publicMetadata: newMeta });
+              console.log('[stripe/webhook] synced Clerk metadata for', clerkId);
+            } catch (clerkErr: any) {
+              console.warn('[stripe/webhook] failed to sync Clerk metadata:', clerkErr.message);
+            }
           }
         } catch (dbErr: any) {
           console.error('[stripe/webhook] database error while upserting user:', dbErr);

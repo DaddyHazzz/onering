@@ -47,6 +47,15 @@ interface LedgerEntry {
   createdAt?: string | null;
 }
 
+interface TokenSummary {
+  mode: string;
+  balance: number;
+  pending_total: number;
+  effective_balance: number;
+  last_ledger_at?: string | null;
+  last_pending_at?: string | null;
+}
+
 export default function Dashboard() {
   const { user } = useUser();
   const [prompt, setPrompt] = useState("");
@@ -76,6 +85,8 @@ export default function Dashboard() {
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [tokenPending, setTokenPending] = useState<number>(0);
   const [tokenLedger, setTokenLedger] = useState<LedgerEntry[]>([]);
+  const [tokenSummary, setTokenSummary] = useState<TokenSummary | null>(null);
+  const isAdmin = Boolean((user?.publicMetadata as any)?.isAdmin || (user?.publicMetadata as any)?.role === "admin");
 
   const refreshStreak = async () => {
     if (!user?.id) return;
@@ -163,9 +174,8 @@ export default function Dashboard() {
   const strideProgress = Math.min(1, strideProgressRaw / protectionStride);
 
   useEffect(() => {
-    // initialize ring from Clerk metadata
+    // initialize ring from Clerk metadata (history only; balance uses token summary)
     const meta = (user?.publicMetadata as any) || {};
-    setRing(Number(meta.ring || 0));
     setHistory(Array.isArray(meta.posts) ? meta.posts.slice(0,5) : []);
   }, [user?.id]); // Depend on user.id instead of user.publicMetadata to avoid re-renders
 
@@ -187,14 +197,16 @@ export default function Dashboard() {
   const refreshTokenLedger = async () => {
     try {
       const [balanceRes, ledgerRes] = await Promise.all([
-        fetch("/api/tokens/balance", { cache: "no-store" }),
+        fetch("/api/tokens/summary", { cache: "no-store" }),
         fetch("/api/tokens/ledger?limit=20", { cache: "no-store" }),
       ]);
       const balanceData = await balanceRes.json();
       const ledgerData = await ledgerRes.json();
       if (balanceRes.ok) {
         setTokenBalance(balanceData.balance ?? null);
-        setTokenPending(balanceData.pending?.totalPending ?? 0);
+        setTokenPending(balanceData.pending_total ?? 0);
+        setTokenSummary(balanceData);
+        setRing(balanceData.effective_balance ?? balanceData.balance ?? 0);
       }
       if (ledgerRes.ok) {
         setTokenLedger(ledgerData.entries || []);
@@ -211,7 +223,7 @@ export default function Dashboard() {
         const res = await fetch("/api/ring/daily-login", { method: "POST" });
         const data = await res.json();
         if (data.success) {
-          setRing(data.newBalance);
+          await refreshTokenLedger();
           console.log("[dashboard] daily login bonus:", data.message);
         }
       } catch (e) {
@@ -417,7 +429,7 @@ export default function Dashboard() {
                   const res = await fetch('/api/mine-ring', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: 100 }) });
                   const d = await res.json();
                   if (!res.ok) return alert(d.error || 'mine failed');
-                  setRing(d.ring);
+                  await refreshTokenLedger();
                   alert('Mined +100 RING');
                 } catch (e) { console.error(e); alert('mine failed'); }
               }} className="px-3 py-2 bg-yellow-500 text-black rounded">Mine RING +100</button>
@@ -523,7 +535,7 @@ export default function Dashboard() {
                         await refreshTokenLedger();
                       }
                       if (!data.token_result || data.token_result.mode === "off") {
-                        setRing((r) => r + 50);
+                        await refreshTokenLedger();
                       }
                       setHistory((h) => [{ platform: 'X', content: result, time: new Date().toISOString() }, ...h].slice(0,5));
                       await refreshStreak();
@@ -557,6 +569,7 @@ export default function Dashboard() {
                       setLoading(false);
                       if (data.success) {
                         setHistory((h) => [{ platform: 'IG', content: result, time: new Date().toISOString() }, ...h].slice(0,5));
+                        await refreshTokenLedger();
                         alert(`Posted to IG! id=${data.id}`);
                       } else {
                         alert(`IG error: ${JSON.stringify(data.error)}`);
@@ -661,7 +674,7 @@ export default function Dashboard() {
                         await refreshTokenLedger();
                       }
                       if (!data.token_result || data.token_result.mode === "off") {
-                        setRing((r) => r + 50);
+                        await refreshTokenLedger();
                       }
                       setThreadLines([]);
                       setTopicForThread("");
@@ -762,7 +775,12 @@ export default function Dashboard() {
 
         {/* RING Ledger */}
         <div className="mt-8 bg-white/5 p-6 rounded-2xl border border-white/10">
-          <h3 className="text-2xl font-bold mb-4">RING Ledger</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-2xl font-bold">RING Ledger</h3>
+            {isAdmin && (
+              <a href="/monitoring" className="text-sm text-yellow-300 hover:underline">Open monitoring</a>
+            )}
+          </div>
           <div className="flex flex-wrap gap-6 mb-4 text-lg">
             <div>
               <strong>Balance:</strong>{" "}
@@ -773,6 +791,24 @@ export default function Dashboard() {
             <div>
               <strong>Pending:</strong>{" "}
               <span className="text-yellow-300 font-bold">{tokenPending}</span>
+            </div>
+            <div>
+              <strong>Effective:</strong>{" "}
+              <span className="text-yellow-300 font-bold">
+                {tokenSummary?.effective_balance ?? tokenBalance ?? "n/a"}
+              </span>
+            </div>
+            <div>
+              <strong>Last Ledger:</strong>{" "}
+              <span className="text-white/70 text-sm">
+                {tokenSummary?.last_ledger_at ? new Date(tokenSummary.last_ledger_at).toLocaleString() : "n/a"}
+              </span>
+            </div>
+            <div>
+              <strong>Last Pending:</strong>{" "}
+              <span className="text-white/70 text-sm">
+                {tokenSummary?.last_pending_at ? new Date(tokenSummary.last_pending_at).toLocaleString() : "n/a"}
+              </span>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -824,7 +860,7 @@ export default function Dashboard() {
                   });
                   const data = await res.json();
                   if (!res.ok) return alert(data.error || "Failed to boost");
-                  setRing(data.newBalance);
+                  await refreshTokenLedger();
                   alert(data.message + " (-100 RING)");
                 } catch (e) {
                   console.error(e);
@@ -845,7 +881,7 @@ export default function Dashboard() {
                   });
                   const data = await res.json();
                   if (!res.ok) return alert(data.error || "Failed to lease");
-                  setRing(data.newBalance);
+                  await refreshTokenLedger();
                   alert(data.message + " (-200 RING)");
                 } catch (e) {
                   console.error(e);
@@ -887,7 +923,7 @@ export default function Dashboard() {
                     const d = await res.json();
                     if (!res.ok) return alert(d.error || 'claim failed');
                     alert('Referral claimed! +200 RING each');
-                    setRing((r) => r + 200);
+                    await refreshTokenLedger();
                   } catch (e) { console.error(e); alert('claim failed'); }
                 }} className="px-3 py-2 bg-green-600 rounded">Claim</button>
               </div>
@@ -903,7 +939,7 @@ export default function Dashboard() {
                     const d = await res.json();
                     if (!res.ok) return alert(d.error || 'promo failed');
                     alert(`Promo claimed! +${d.amount} RING`);
-                    setRing((r) => r + d.amount);
+                    await refreshTokenLedger();
                   } catch (e) { console.error(e); alert('promo failed'); }
                 }} className="px-3 py-2 bg-yellow-600 rounded">Claim Promo</button>
               </div>

@@ -16,8 +16,17 @@ describe("Dashboard RING ledger panel", () => {
     global.alert = vi.fn();
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/tokens/balance")) {
-        return { ok: true, json: async () => ({ balance: 42, pending: { totalPending: 7 } }) } as any;
+      if (url.includes("/api/tokens/summary")) {
+        return {
+          ok: true,
+          json: async () => ({
+            balance: 42,
+            pending_total: 7,
+            effective_balance: 49,
+            last_ledger_at: "2025-12-26T00:00:00Z",
+            last_pending_at: "2025-12-26T00:00:00Z",
+          }),
+        } as any;
       }
       if (url.includes("/api/tokens/ledger")) {
         return {
@@ -66,6 +75,8 @@ describe("Dashboard RING ledger panel", () => {
     expect(screen.getAllByText("42").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Pending:")).toBeInTheDocument();
     expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("Effective:")).toBeInTheDocument();
+    expect(screen.getByText("49")).toBeInTheDocument();
     expect(screen.getByText("publish_success")).toBeInTheDocument();
   });
 });

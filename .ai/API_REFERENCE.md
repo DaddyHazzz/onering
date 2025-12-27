@@ -506,6 +506,14 @@ Notes:
   - Body: { event_id, user_id, platform, content_hash, published_at?, platform_post_id?, enforcement_request_id?, enforcement_receipt_id?, metadata? }
   - Returns: { ok: true, event_id, token_result }
 
+- GET /v1/tokens/summary/{user_id}
+  - Canonical balance summary (ledger-first).
+  - Returns: { userId, mode, balance, pending_total, effective_balance, last_ledger_at, last_pending_at, guardrails_state, clerk_sync }
+  - Use this for UI balances whenever ONERING_TOKEN_ISSUANCE=shadow|live.
+
+Error codes:
+- `LEGACY_RING_WRITE_BLOCKED`: legacy balance mutation attempted while token issuance is shadow/live.
+
 ## Monitoring (internal)
 
 - GET /v1/monitoring/enforcement/recent
@@ -516,9 +524,9 @@ Notes:
 
 - GET /v1/monitoring/tokens/recent
   - Query: `limit` (default 50, max 200), `since` (ISO8601)
-  - Returns: { items: [{ event_id, platform, enforcement_request_id, enforcement_receipt_id, token_issued_amount, token_pending_amount, token_reason_code, token_ledger_id, token_pending_id, created_at }] }
+  - Returns: { items: [{ event_id, user_id, platform, enforcement_request_id, enforcement_receipt_id, token_issued_amount, token_pending_amount, token_reason_code, token_ledger_id, token_pending_id, created_at, last_clerk_sync_at, last_clerk_sync_error }] }
 - GET /v1/monitoring/tokens/metrics
-  - Returns: { window_hours: 24, metrics: { total_issued, total_pending, blocked_issuance, top_reason_codes, p90_issuance_latency_ms } }
+  - Returns: { window_hours: 24, metrics: { total_issued, total_pending, blocked_issuance, top_reason_codes, p90_issuance_latency_ms, reconciliation_mismatches, clerk_sync_failures_24h, idempotency_conflicts_24h } }
 
 ## Audit Retention (ops)
 

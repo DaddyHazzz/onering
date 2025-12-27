@@ -3,6 +3,7 @@ import { z } from "zod";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
 import Redis from "ioredis";
 import { prisma } from "@/lib/db";
+import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   content: z.string().min(1),
@@ -98,12 +99,27 @@ export async function POST(req: NextRequest) {
     const result = await postToLinkedIn(content);
     if (!result.success) return failure(result.error || "Failed to post", 500);
 
+    const tokenMode = getTokenIssuanceMode();
+    const ringAward = 50;
+
     // Award RING and record post
     let dbUser = await prisma.user.findUnique({ where: { clerkId: userId } });
     if (!dbUser) {
-      dbUser = await prisma.user.create({ data: { clerkId: userId, ringBalance: 50 } });
-    } else {
-      dbUser = await prisma.user.update({ where: { id: dbUser.id }, data: { ringBalance: { increment: 50 } } });
+      dbUser = await prisma.user.create({ data: { clerkId: userId, ringBalance: tokenMode === "off" ? ringAward : 0 } });
+    } else if (tokenMode === "off") {
+      dbUser = await prisma.user.update({ where: { id: dbUser.id }, data: { ringBalance: { increment: ringAward } } });
+    }
+
+    if (tokenMode !== "off") {
+      const earned = await applyLedgerEarn({
+        userId,
+        amount: ringAward,
+        reasonCode: "social_post:li",
+        metadata: { externalId: result.id },
+      });
+      if (!earned.ok) {
+        console.warn("[post-to-linkedin] ledger earn blocked:", earned.error);
+      }
     }
     await prisma.post.create({
       data: {
@@ -111,19 +127,21 @@ export async function POST(req: NextRequest) {
         platform: "LI",
         content: content.slice(0, 280),
         externalId: result.id,
-        ringEarned: 50,
+        ringEarned: ringAward,
         status: "published",
       },
     });
 
-    try {
-      const clerkUser = await clerkClient.users.getUser(userId);
-      const meta = (clerkUser.publicMetadata || {}) as any;
-      const posts = Array.isArray(meta.posts) ? meta.posts : [];
-      posts.unshift({ id: result.id, platform: "LI", content: content.slice(0, 280), time: new Date().toISOString(), ringEarned: 50 });
-      await clerkClient.users.updateUser(userId, { publicMetadata: { ...meta, posts, ring: dbUser.ringBalance } });
-    } catch (e: any) {
-      console.warn("[post-to-linkedin] clerk metadata sync failed:", e.message);
+    if (tokenMode === "off") {
+      try {
+        const clerkUser = await clerkClient.users.getUser(userId);
+        const meta = (clerkUser.publicMetadata || {}) as any;
+        const posts = Array.isArray(meta.posts) ? meta.posts : [];
+        posts.unshift({ id: result.id, platform: "LI", content: content.slice(0, 280), time: new Date().toISOString(), ringEarned: ringAward });
+        await clerkClient.users.updateUser(userId, { publicMetadata: { ...meta, posts, ring: dbUser.ringBalance } });
+      } catch (e: any) {
+        console.warn("[post-to-linkedin] clerk metadata sync failed:", e.message);
+      }
     }
 
     return success({ id: result.id, remaining: rate.remaining });

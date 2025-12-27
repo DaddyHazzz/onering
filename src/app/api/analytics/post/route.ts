@@ -4,6 +4,7 @@ import { z } from "zod";
 import { TwitterApi } from "twitter-api-v2";
 import { prisma } from "@/lib/db";
 import { currentUser } from "@clerk/nextjs/server";
+import { getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   externalId: z.string().min(1),
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest) {
           where: { clerkId: userId },
         });
 
-        if (dbUser) {
+        if (dbUser && getTokenIssuanceMode() === "off") {
           await prisma.post.updateMany({
             where: {
               userId: dbUser.id,

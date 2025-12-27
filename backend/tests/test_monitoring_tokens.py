@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
-from sqlalchemy import insert
+from sqlalchemy import insert, text
 
 from backend.core.config import settings
-from backend.core.database import create_all_tables, get_db_session, publish_events
+from backend.core.database import create_all_tables, get_db_session, publish_events, publish_event_conflicts, ring_clerk_sync
 from backend.main import app
 
 client = TestClient(app)
@@ -43,6 +43,42 @@ def test_monitoring_tokens_endpoints(monkeypatch):
                 **_insert_publish_event(now - timedelta(hours=1), token_mode="live", issued=10, pending=0, reason_code="ISSUED")
             )
         )
+        session.execute(
+            text(
+                """
+                INSERT INTO ring_clerk_sync (user_id, last_sync_at, last_error, last_error_at)
+                VALUES (:user_id, :last_sync_at, :last_error, :last_error_at)
+                ON CONFLICT (user_id)
+                DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at,
+                              last_error = EXCLUDED.last_error,
+                              last_error_at = EXCLUDED.last_error_at,
+                              updated_at = NOW()
+                """
+            ),
+            {
+                "user_id": "u1",
+                "last_sync_at": now - timedelta(minutes=5),
+                "last_error": "clerk_timeout",
+                "last_error_at": now - timedelta(minutes=4),
+            },
+        )
+        session.execute(
+            insert(publish_event_conflicts).values(
+                event_id="evt-conflict",
+                user_id="u1",
+                reason="idempotent_replay",
+                created_at=now,
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO ring_ledger (user_id, event_type, reason_code, amount, balance_after, metadata, created_at)
+                VALUES (:user_id, 'ADJUSTMENT', 'reconciliation_mismatch', 0, 0, '{}'::jsonb, :created_at)
+                """
+            ),
+            {"user_id": "u1", "created_at": now},
+        )
 
     monkeypatch.setattr(settings, "ADMIN_KEY", "test-key")
     monkeypatch.setattr(settings, "ADMIN_AUTH_MODE", "legacy")
@@ -64,3 +100,6 @@ def test_monitoring_tokens_endpoints(monkeypatch):
     payload = metrics.json()
     assert payload["metrics"]["total_pending"] >= 0
     assert payload["metrics"]["total_issued"] >= 0
+    assert payload["metrics"]["reconciliation_mismatches"] >= 1
+    assert payload["metrics"]["clerk_sync_failures_24h"] >= 1
+    assert payload["metrics"]["idempotency_conflicts_24h"] >= 1

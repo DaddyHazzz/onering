@@ -176,7 +176,7 @@ def validate_api_key(db: Session, key: str, *, client_ip: Optional[str] = None) 
     keys = db.execute(
         text(
             """
-            SELECT id, key_id, key_hash, owner_user_id, scopes, rate_limit_tier, expires_at, ip_allowlist
+            SELECT id, key_id, key_hash, owner_user_id, scopes, rate_limit_tier, expires_at, ip_allowlist, canary_enabled
             FROM external_api_keys
             WHERE is_active = true
               AND (expires_at IS NULL OR expires_at > NOW())
@@ -205,6 +205,7 @@ def validate_api_key(db: Session, key: str, *, client_ip: Optional[str] = None) 
                 "rate_limit_tier": row[5],
                 "expires_at": row[6],
                 "ip_allowlist": ip_allowlist,
+                "canary_enabled": row[8],
             }
     
     return None

@@ -223,7 +223,7 @@ export async function POST(req: NextRequest) {
           platform: "IG",
           content: content.slice(0, 280),
           externalId: result.id,
-          ringEarned: tokenMode === "off" ? ringAward : ringAward,
+          ringEarned: ringAward,
           status: "published",
         },
       });

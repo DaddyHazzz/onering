@@ -31,3 +31,17 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 ## Phase 10.2 Publish Integration
 - Ensure `publish_events` exists before enabling token issuance modes.
 - If using manual migrations, run `create_all_tables()` after deploying updated metadata.
+
+## Phase 10.2 Ledger-Truth Migration (Dec 26, 2025)
+- Apply SQL migration: `prisma/migrations/20251226_phase10_2_ledger_truth/migration.sql`
+  - Adds indices for `publish_events`, `ring_ledger`, `ring_pending`
+  - Adds tables: `ring_clerk_sync`, `publish_event_conflicts`
+- Run ledger backfill/validator (dry-run default):
+  - `python -m backend.workers.backfill_ring_ledger --dry-run`
+  - Use `--live` only after reviewing report and taking a backup.
+- Optional: run Clerk sync worker (dry-run default):
+  - `python -m backend.workers.sync_clerk_ring_balance --dry-run`
+
+Notes:
+- Ledger is the source of truth in shadow/live; avoid direct writes to `users.ringBalance` outside the ledger service.
+

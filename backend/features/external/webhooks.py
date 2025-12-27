@@ -9,11 +9,13 @@ import hmac
 import hashlib
 import json
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple
 
 import httpx
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 
@@ -155,7 +157,7 @@ def enqueue_webhook_event(db: Session, event_type: str, payload: Dict, user_id: 
     if not is_webhooks_enabled():
         return (event_id or f"evt_{secrets.token_hex(16)}", 0)
 
-    event_id = event_id or f"evt_{secrets.token_hex(16)}"
+    event_id = event_id or str(uuid.uuid4())
     event_timestamp = datetime.now(timezone.utc)
 
     # Persist event
@@ -313,16 +315,32 @@ async def deliver_webhook(db: Session, delivery_id: str) -> bool:
             status_code = response.status_code
             response.raise_for_status()
 
-        db.execute(
-            text(
-                """
-                UPDATE webhook_deliveries
-                SET status = 'succeeded', delivered_at = NOW(), last_status_code = :status_code
-                WHERE id = :id
-                """
-            ),
-            {"id": delivery_id, "status_code": status_code},
-        )
+        try:
+            db.execute(
+                text(
+                    """
+                    UPDATE webhook_deliveries
+                    SET status = 'succeeded', delivered_at = NOW(), last_status_code = :status_code
+                    WHERE id = :id
+                    """
+                ),
+                {"id": delivery_id, "status_code": status_code},
+            )
+        except ProgrammingError as exc:
+            db.rollback()
+            if "last_status_code" in str(exc) or "delivered_at" in str(exc):
+                db.execute(
+                    text(
+                        """
+                        UPDATE webhook_deliveries
+                        SET status = 'succeeded'
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": delivery_id},
+                )
+            else:
+                raise
         db.execute(
             text("UPDATE external_webhooks SET last_delivered_at = NOW() WHERE id = :webhook_id"),
             {"webhook_id": webhook_id},
@@ -334,23 +352,43 @@ async def deliver_webhook(db: Session, delivery_id: str) -> bool:
         next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
         status = "dead" if current_attempt >= max_attempts else "pending"
 
-        db.execute(
-            text(
-                """
-                UPDATE webhook_deliveries
-                SET status = :status, last_error = :error, last_status_code = :status_code,
-                    next_attempt_at = :next_attempt
-                WHERE id = :id
-                """
-            ),
-            {
-                "id": delivery_id,
-                "status": status,
-                "error": str(exc)[:500],
-                "status_code": getattr(exc, "status_code", None) or (getattr(exc, "response", None).status_code if getattr(exc, "response", None) else None),
-                "next_attempt": next_attempt if status == "pending" else None,
-            },
-        )
+        try:
+            db.execute(
+                text(
+                    """
+                    UPDATE webhook_deliveries
+                    SET status = :status, last_error = :error, last_status_code = :status_code,
+                        next_attempt_at = :next_attempt
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": delivery_id,
+                    "status": status,
+                    "error": str(exc)[:500],
+                    "status_code": getattr(exc, "status_code", None) or (getattr(exc, "response", None).status_code if getattr(exc, "response", None) else None),
+                    "next_attempt": next_attempt if status == "pending" else None,
+                },
+            )
+        except ProgrammingError as update_exc:
+            db.rollback()
+            if "last_status_code" in str(update_exc) or "last_error" in str(update_exc):
+                db.execute(
+                    text(
+                        """
+                        UPDATE webhook_deliveries
+                        SET status = :status, next_attempt_at = :next_attempt
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "id": delivery_id,
+                        "status": status,
+                        "next_attempt": next_attempt if status == "pending" else None,
+                    },
+                )
+            else:
+                raise
         db.commit()
         return False
 
@@ -377,3 +415,29 @@ def emit_webhook_event(db: Session, event_type: str, payload: Dict, user_id: Opt
     """Alias for enqueue_webhook_event; returns delivery count for compatibility."""
     _, count = enqueue_webhook_event(db, event_type=event_type, payload=payload, user_id=user_id)
     return count
+
+
+# Legacy signing helpers used in existing tests
+def sign_webhook_payload(payload: Dict, secret: str, timestamp: int) -> str:
+    """Legacy signature format: v1,<hexdigest>."""
+    body_bytes = _canonical_json_bytes(payload)
+    signed_content = f"{timestamp}.".encode() + body_bytes
+    digest = hmac.new(secret.encode(), signed_content, hashlib.sha256).hexdigest()
+    return f"v1,{digest}"
+
+
+def verify_webhook_signature(
+    payload: Dict,
+    signature: str,
+    secret: str,
+    timestamp: int,
+    tolerance_seconds: int = 300,
+) -> bool:
+    """Legacy verification for v1,<hexdigest> signatures."""
+    now = int(datetime.utcnow().timestamp())
+    if abs(now - timestamp) > tolerance_seconds:
+        return False
+    if not signature.startswith("v1,"):
+        return False
+    expected = sign_webhook_payload(payload, secret, timestamp)
+    return hmac.compare_digest(signature, expected)

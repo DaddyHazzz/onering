@@ -161,6 +161,7 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 - **Lifetime Cap:** 1,000,000 RING per user (prevents unchecked accumulation)
 - **Audit Trail:** Append-only PostgreSQL table logs all RING transactions immutably
 - **Publish Events:** Canonical publish_events table linking enforcement receipts to ledger entries
+- **Ledger-as-Truth:** Canonical balance summary endpoint + clerk sync worker + backfill validator
 - **Anti-Gaming:** Sybil detection heuristics, dynamic rate limits (5/10/15 posts per 15min)
 
 **Agent Integration:**
@@ -190,7 +191,8 @@ Canonical documentation for OneRing. Migrated from /docs on 2025-12-25.
 2. Enforcement receipt pass rate > 95% with no audit_write_failed spikes
 3. Duplicate issuance rate < 0.1% (publish_event_id idempotency)
 4. p90 issuance latency < 500ms
-5. Live flip checklist signed by Platform + Finance owners
+5. Clerk sync dry-run validated with zero write errors
+6. Live flip checklist signed by Platform + Finance owners
 
 **See:** [PHASE_10_MASTER_PLAN.md Part C](PHASE_10_MASTER_PLAN.md#part-c-token-loop-activation-design-phase-102) for detailed token economics
 

@@ -4,8 +4,18 @@ External Platform API endpoints (Phase 10.3).
 Read-only endpoints for third-party integrations.
 Requires API key authentication with scope enforcement.
 
-Kill switch: ONERING_EXTERNAL_API_ENABLED (default 0)
+Kill switches:
+- ONERING_EXTERNAL_API_ENABLED (default 0)
+- ONERING_WEBHOOKS_ENABLED (default 0)
+- ONERING_WEBHOOKS_DELIVERY_ENABLED (default 0)
+- ONERING_EXTERNAL_API_CANARY_ONLY (default 0) — canary-only mode
+
+Canary Mode:
+- Per-key flag: canary_enabled
+- If canary_enabled: lower rate limits (10/hr) and extra logging
+- If ONERING_EXTERNAL_API_CANARY_ONLY=1: reject non-canary keys with 403
 """
+import os
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, Response
 from pydantic import BaseModel
@@ -25,11 +35,28 @@ from backend.features.tokens.balance import get_effective_ring_balance
 router = APIRouter(prefix="/v1/external", tags=["external"])
 
 
+def is_canary_only_mode() -> bool:
+    """Check if canary-only mode is enabled."""
+    return os.getenv("ONERING_EXTERNAL_API_CANARY_ONLY", "0") == "1"
+
+
+def get_canary_rate_limit(tier: str, is_canary: bool) -> int:
+    """Get effective rate limit, reduced if canary."""
+    base_limits = {
+        "free": 100,
+        "pro": 1000,
+        "enterprise": 10000,
+    }
+    base = base_limits.get(tier, 100)
+    return 10 if is_canary else base  # Canary mode: 10/hr
+
+
 class ExternalApiKeyInfo(BaseModel):
     key_id: str
     owner_user_id: str
     scopes: List[str]
     rate_limit_tier: str
+    canary_enabled: bool = False
 
 
 async def require_api_key(
@@ -41,6 +68,10 @@ async def require_api_key(
     """
     Dependency to require valid API key.
     Validates key, checks rate limits, and returns key info.
+    
+    Supports canary mode:
+    - Per-key canary_enabled flag reduces rate limit to 10/hr
+    - If ONERING_EXTERNAL_API_CANARY_ONLY=1: reject non-canary keys
     """
     if not is_external_api_enabled():
         raise HTTPException(
@@ -71,17 +102,37 @@ async def require_api_key(
             status_code=401,
             detail="Invalid or expired API key"
         )
+    
+    # Check canary mode enforcement
+    canary_only = is_canary_only_mode()
+    is_canary_key = key_info.get("canary_enabled", False)
+    if canary_only and not is_canary_key:
+        raise HTTPException(
+            status_code=403,
+            detail="External API is in canary-only mode. Your key is not authorized for canary access.",
+            headers={"X-Error-Code": "CANARY_ONLY_MODE"},
+        )
 
-    # Check rate limit (concurrency-safe)
+    # Check rate limit with canary adjustment
+    effective_limit = get_canary_rate_limit(key_info["rate_limit_tier"], is_canary_key)
     allowed, current_count, limit, reset_at = check_rate_limit(
         db, key_info["key_id"], key_info["rate_limit_tier"]
     )
+    
+    # Override limit if canary
+    if is_canary_key:
+        limit = effective_limit
+        allowed = current_count < effective_limit
+    
     remaining = max(limit - current_count, 0)
     reset_ts = int(reset_at.timestamp())
 
     response.headers["X-RateLimit-Limit"] = str(limit)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
     response.headers["X-RateLimit-Reset"] = str(reset_ts)
+    
+    if is_canary_key:
+        response.headers["X-Canary-Mode"] = "true"
 
     if not allowed:
         raise HTTPException(
@@ -101,8 +152,15 @@ async def require_api_key(
         "remaining": remaining,
         "reset_at": reset_at,
     }
+    request.state.canary_mode = is_canary_key
 
-    return ExternalApiKeyInfo(**key_info)
+    return ExternalApiKeyInfo(
+        key_id=key_info["key_id"],
+        owner_user_id=key_info["owner_user_id"],
+        scopes=key_info["scopes"],
+        rate_limit_tier=key_info["rate_limit_tier"],
+        canary_enabled=is_canary_key,
+    )
 
 
 def require_scope(required_scope: str):
