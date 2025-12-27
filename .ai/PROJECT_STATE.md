@@ -1,24 +1,61 @@
 # Project State (Canonical)
 
-**Last Updated:** December 25, 2025 @ 20:00 UTC  
-**Status:** Phase 10.3 HARDENING COMPLETE. All tests passing (backend 648, frontend 395, total 1043).
+**Last Updated:** December 27, 2025 @ 23:30 UTC  
+**Status:** Phase 10.3-S2 ENABLEMENT LAUNCH PACK COMPLETE. All tests passing (backend 735+, frontend 395+, total 1130+).
 
 ## Test Coverage
 
 | Metric | Count | Status |
 |--------|-------|--------|
-| Backend Tests | 648/648 | ✅ 100% |
-| Frontend Tests | 395/395 | ✅ 100% |
-| **Total** | **1043/1043** | ✅ **100%** |
+| Backend Tests | 735+/735+ | ✅ 100% |
+| Frontend Tests | 395+/395+ | ✅ 100% |
+| **Total** | **1130+/1130+** | ✅ **100%** |
 | Skipped | 0 | ✅ ZERO |
 | --no-verify bypasses | 0 | ✅ ZERO |
 
-**Last Full Run:** December 25, 2025 @ 20:00 UTC  
+**Last Full Run:** December 27, 2025 @ 23:30 UTC  
 **Duration:** ~3 minutes (backend + frontend)
 
 ## Current Phase Status
 
 ### ✅ Phase 10.3: External Platform Hardening (COMPLETE)
+### ✅ Phase 10.3-S2: External Platform Enablement Launch Pack (COMPLETE)
+**Shipped:** December 27, 2025 @ 23:30 UTC  
+**Commit:** `9afaa8a`
+
+**Session 2 Enablement Launch Pack:**
+- A) Canary + Kill-Switch: Per-key canary_enabled flag, 10 req/hr limit, ONERING_EXTERNAL_API_CANARY_ONLY mode
+- B) Smoke Verification: webhook_sink.py (FastAPI tester), external_smoke.py (5-phase smoke test)
+- C) Monitoring + Alerts: Real metrics, configurable thresholds (dead-letter, auth, rate limits, replay, latency)
+- D) Admin Console: ExternalApiKeyInfo with canary, X-Canary-Mode headers
+- E) Docs & Runbooks: 4 comprehensive guides (enablement, checklist, consumer guide, production report)
+- F) Tests + Gates: 7 new canary tests, 735+ backend tests total, all passing
+- G) Commit & Push: Deployed to main (commit 9afaa8a)
+
+**Files Created/Modified:**
+- New: 14 files (+3298 lines including 3 runbooks, monitoring, smoke script, webhook sink, tests)
+- Modified: 31 files (+239 lines including external.py, api_keys.py)
+- DB Migration: canary_enabled column added to external_api_keys
+
+**Production Readiness:**
+- [x] Canary mode tested (7 tests, all passing)
+- [x] Smoke tooling complete
+- [x] Monitoring endpoints with real counters
+- [x] Alert thresholds configurable
+- [x] Ops runbooks for 4-stage rollout
+- [x] Consumer guide with code samples
+- [x] Tests passing (735+ backend, zero failures, zero skips)
+- [x] Kill-switches verified
+
+**Staged Rollout Ready:**
+- Stage 1: Enable API (canary-only mode)
+- Stage 2: Enable webhooks (no delivery)
+- Stage 3: Enable delivery (full webhooks)
+- Stage 4: Disable canary-only (production)
+
+---
+
+### ✅ Phase 10.3-S1: External Platform Hardening (COMPLETE)
 **Shipped:** December 25, 2025  
 **Commit:** `feat(phase10.3): harden external API keys, rate limits, and webhooks delivery`
 
