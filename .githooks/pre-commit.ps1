@@ -20,6 +20,14 @@ $env:ONERING_HOOK_RUNNING = "1"
 $repoRoot = git rev-parse --show-toplevel
 Push-Location $repoRoot
 
+Write-Host "[pre-commit] Secret scan (staged)..." -ForegroundColor Cyan
+python tools/secret_scan.py --staged
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    $env:ONERING_HOOK_RUNNING = ""
+    exit $LASTEXITCODE
+}
+
 $resolvedMode = $Mode
 if (-not $resolvedMode -and $env:ONERING_GATE) { $resolvedMode = $env:ONERING_GATE }
 if (-not $resolvedMode) {

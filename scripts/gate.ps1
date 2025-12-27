@@ -26,6 +26,10 @@ if (-not $resolvedMode) {
 $resolvedMode = $resolvedMode.ToLower()
 Write-Host "Starting test gate (mode: $resolvedMode)..." -ForegroundColor Cyan
 
+Write-Host "Running secret scan..." -ForegroundColor Yellow
+python tools/secret_scan.py --all
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 switch ($resolvedMode) {
   "docs" {
     Write-Host "DOCS mode: skipping automated tests." -ForegroundColor Yellow

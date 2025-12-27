@@ -18,6 +18,9 @@ export ONERING_HOOK_RUNNING=1
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+echo "[pre-commit] Secret scan (staged)..."
+python tools/secret_scan.py --staged
+
 MODE="${ONERING_GATE:-}"
 
 if [[ -z "$MODE" ]]; then
