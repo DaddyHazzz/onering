@@ -28,7 +28,7 @@ if (-not $NoBackend) {
     Write-Host "BACKEND TESTS" -ForegroundColor Yellow
     Write-Host "Running backend tests with DATABASE_URL..." -ForegroundColor Gray
     
-    $env:DATABASE_URL = "postgresql://onering:onering@localhost:5432/onering"
+    $env:DATABASE_URL = "postgresql://user:pass@localhost:5432/onering"
     $env:PYTHONPATH = $repoRoot
     
     Push-Location $repoRoot

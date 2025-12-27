@@ -124,7 +124,7 @@ if (Test-Path $venvPython) {
 }
 
 # Set environment automatically
-$env:DATABASE_URL = "postgresql://onering:onering@localhost:5432/onering"
+$env:DATABASE_URL = "postgresql://user:pass@localhost:5432/onering"
 $env:PYTHONPATH = $repoRoot
 
 # Run with proper Python

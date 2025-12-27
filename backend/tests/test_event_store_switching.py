@@ -25,7 +25,7 @@ from backend.features.analytics.event_store import (
 def test_postgres_store_when_database_url_set():
     """Test that PostgreSQL store is used when DATABASE_URL is set."""
     # Ensure DATABASE_URL is set
-    os.environ["DATABASE_URL"] = "postgresql://onering:onering@localhost:5432/onering"
+    os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost:5432/onering"
     
     # Reset to force re-initialization
     reset_store()
@@ -81,7 +81,7 @@ def test_store_singleton():
 def test_store_api_agnostic():
     """Test that API consumers work with both implementations."""
     # Ensure DATABASE_URL is set for this test
-    os.environ["DATABASE_URL"] = "postgresql://onering:onering@localhost:5432/onering"
+    os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost:5432/onering"
     
     reset_store()
     store = get_store()

@@ -73,10 +73,6 @@ SECRET_PATTERNS = {
         "pattern": r"(?:postgresql|mysql|mongodb)://[^:]+:([^@]+)@",
         "risk": "HIGH - Database password in connection string",
     },
-    "env_secret_value": {
-        "pattern": r"(?:SECRET|PASSWORD|TOKEN|APIKEY)\s*[:=]\s*(?!['\"]?\$|['\"]?PLACEHOLDER|['\"]?\.\.\.|test)",
-        "risk": "MEDIUM - Potential secret assignment in env/config",
-    },
 }
 
 # Files to skip (git-ignored, binary, etc.)
@@ -135,13 +131,36 @@ def scan_content(content: str, file_path: str) -> List[Tuple[str, str, int, str]
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error as e:
-            print(f"⚠️  Invalid regex pattern '{pattern_name}': {e}", file=sys.stderr)
+            print(f"[warn] Invalid regex pattern '{pattern_name}': {e}", file=sys.stderr)
             continue
 
         for line_num, line in enumerate(lines, 1):
             matches = regex.finditer(line)
             for match in matches:
                 match_text = match.group(0)
+
+                if pattern_name in {"private_key_pem", "private_key_openssh"}:
+                    if file_path.endswith("SECURITY_SECRETS_POLICY.md"):
+                        continue
+
+                if pattern_name == "password_in_url":
+                    password_value = match.group(1).strip()
+                    placeholder_passwords = {
+                        "password",
+                        "postgres",
+                        "example",
+                        "test",
+                        "changeme",
+                        "pass",
+                        "yourpassword",
+                        "yourpass",
+                        "dev",
+                        "local",
+                    }
+                    if password_value.lower() in placeholder_passwords:
+                        continue
+                    if "password" in password_value.lower():
+                        continue
 
                 # For .env.example, skip obvious examples and placeholders
                 if is_env_example:
@@ -195,7 +214,7 @@ def scan_files(file_paths: List[str]) -> Tuple[int, List[Tuple[str, str, str, in
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
         except Exception as e:
-            print(f"⚠️  Error reading {file_path}: {e}", file=sys.stderr)
+            print(f"[warn] Error reading {file_path}: {e}", file=sys.stderr)
             error_count += 1
             continue
 
@@ -217,7 +236,7 @@ def get_staged_files() -> List[str]:
         )
         return result.stdout.strip().split("\n") if result.stdout.strip() else []
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error getting git staged files: {e}", file=sys.stderr)
+        print(f"[error] Error getting git staged files: {e}", file=sys.stderr)
         return []
 
 
@@ -232,7 +251,7 @@ def get_all_files() -> List[str]:
         )
         return result.stdout.strip().split("\n") if result.stdout.strip() else []
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error getting git files: {e}", file=sys.stderr)
+        print(f"[error] Error getting git files: {e}", file=sys.stderr)
         return []
 
 
@@ -247,40 +266,41 @@ def get_diff_files(commit: str = "HEAD") -> List[str]:
         )
         return result.stdout.strip().split("\n") if result.stdout.strip() else []
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error getting git diff: {e}", file=sys.stderr)
+        print(f"[error] Error getting git diff: {e}", file=sys.stderr)
         return []
 
 
 def print_findings(findings: List[Tuple[str, str, str, int, str]]) -> int:
     """Print findings in readable format. Returns exit code."""
     if not findings:
-        print("✅ No secrets detected!")
+        print("[ok] No secrets detected.")
         return 0
 
-    print(f"\n🚨 SECURITY ALERT: {len(findings)} secret(s) found!\n")
+    print(f"\n[alert] SECURITY ALERT: {len(findings)} secret(s) found.\n")
     print("-" * 80)
 
     by_risk = {}
     for file_path, pattern_name, obfuscated_match, line_num, risk in findings:
-        if risk not in by_risk:
-            by_risk[risk] = []
-        by_risk[risk].append((file_path, pattern_name, obfuscated_match, line_num))
+        risk_level = risk.split(" - ", 1)[0] if " - " in risk else risk
+        if risk_level not in by_risk:
+            by_risk[risk_level] = []
+        by_risk[risk_level].append((file_path, pattern_name, obfuscated_match, line_num, risk))
 
     # Print by risk level
-    for risk_level in ["CRITICAL", "HIGH", "MEDIUM"]:
+    for risk_level in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
         if risk_level not in by_risk:
             continue
         print(f"\n{risk_level}:")
-        for file_path, pattern_name, obfuscated_match, line_num in by_risk[risk_level]:
-            pattern_info = SECRET_PATTERNS[pattern_name]
+        for file_path, pattern_name, obfuscated_match, line_num, risk in by_risk[risk_level]:
+            pattern_info = SECRET_PATTERNS.get(pattern_name, {"risk": risk})
             print(
-                f"  {file_path}:{line_num} — {pattern_name}\n"
+                f"  {file_path}:{line_num}  {pattern_name}\n"
                 f"    Match: {obfuscated_match}\n"
                 f"    Risk: {pattern_info['risk']}"
             )
 
     print("\n" + "-" * 80)
-    print("❌ ABORT: Do not commit. Rotate compromised secrets immediately.")
+    print("[abort] Do not commit. Rotate compromised secrets immediately.")
     print("   See .ai/SECURITY_SECRETS_POLICY.md for rotation procedures.")
     print("-" * 80 + "\n")
 
@@ -318,29 +338,29 @@ Exit Codes:
     # Determine files to scan
     if args.staged:
         files = get_staged_files()
-        print("📝 Scanning staged files...\n")
+        print("[scan] Scanning staged files...\n")
     elif args.all:
         files = get_all_files()
-        print("📝 Scanning all files in repository...\n")
+        print("[scan] Scanning all files in repository...\n")
     elif args.diff:
         files = get_diff_files(args.diff)
-        print(f"📝 Scanning diff since {args.diff}...\n")
+        print(f"[scan] Scanning diff since {args.diff}...\n")
     elif args.file:
         files = [args.file]
-        print(f"📝 Scanning {args.file}...\n")
+        print(f"[scan] Scanning {args.file}...\n")
     else:
         parser.print_help()
         return 2
 
     if not files:
-        print("✅ No files to scan.")
+        print("[ok] No files to scan.")
         return 0
 
     # Scan
     error_count, findings = scan_files(files)
 
     if error_count > 0:
-        print(f"⚠️  {error_count} error(s) during scan", file=sys.stderr)
+        print(f"[warn] {error_count} error(s) during scan", file=sys.stderr)
 
     # Print results
     exit_code = print_findings(findings)

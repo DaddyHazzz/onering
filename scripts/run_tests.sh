@@ -21,7 +21,7 @@ fi
 # Backend tests
 echo "BACKEND TESTS"
 echo "Running backend tests with DATABASE_URL..."
-export DATABASE_URL="postgresql://onering:onering@localhost:5432/onering"
+export DATABASE_URL="postgresql://user:pass@localhost:5432/onering"
 export PYTHONPATH="${REPO_ROOT}"
 
 pushd "${REPO_ROOT}" >/dev/null

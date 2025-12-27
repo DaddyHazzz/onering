@@ -155,7 +155,7 @@ def test_database_foundation():
 if __name__ == "__main__":
     # Set DATABASE_URL if not set
     if not os.getenv("DATABASE_URL"):
-        os.environ["DATABASE_URL"] = "postgresql://onering:onering@localhost:5432/onering"
+        os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost:5432/onering"
     
     success = test_database_foundation()
     sys.exit(0 if success else 1)

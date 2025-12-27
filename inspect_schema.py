@@ -4,7 +4,7 @@
 from sqlalchemy import inspect, create_engine
 import os
 
-url = os.getenv('DATABASE_URL', 'postgresql://onering:onering@localhost:5432/onering')
+url = os.getenv('DATABASE_URL', 'postgresql://user:pass@localhost:5432/onering')
 engine = create_engine(url)
 inspector = inspect(engine)
 

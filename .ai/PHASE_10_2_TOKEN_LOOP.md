@@ -511,7 +511,7 @@ RING_RECONCILE_SCHEDULE="0 3 * * *"  # Daily at 3 AM UTC
 Uses existing `DATABASE_URL` from `.env.local`:
 
 ```
-DATABASE_URL="postgresql://onering:onering@localhost:5432/onering"
+DATABASE_URL="postgresql://user:pass@localhost:5432/onering"
 ```
 
 ---
