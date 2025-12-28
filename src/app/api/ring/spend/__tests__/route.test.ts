@@ -21,10 +21,12 @@ vi.mock("@/lib/db", () => ({
 
 const applyLedgerSpendMock = vi.hoisted(() => vi.fn());
 const getTokenIssuanceModeMock = vi.hoisted(() => vi.fn());
+const ensureLegacyRingWritesAllowedMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/ring-ledger", () => ({
   applyLedgerSpend: (...args: any[]) => applyLedgerSpendMock(...args),
   getTokenIssuanceMode: () => getTokenIssuanceModeMock(),
+  ensureLegacyRingWritesAllowed: () => ensureLegacyRingWritesAllowedMock(),
 }));
 
 import { POST } from "../route";
@@ -37,6 +39,7 @@ describe("POST /api/ring/spend", () => {
     prismaMock.user.update.mockResolvedValue({ id: "db-user", ringBalance: 100 });
     applyLedgerSpendMock.mockReset();
     getTokenIssuanceModeMock.mockReset();
+    ensureLegacyRingWritesAllowedMock.mockReset();
   });
 
   it("shadow mode spends via ledger and returns new balance", async () => {

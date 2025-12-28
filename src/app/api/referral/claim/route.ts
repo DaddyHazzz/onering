@@ -1,6 +1,6 @@
 import { currentUser, clerkClient } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/db';
-import { applyLedgerEarn, getTokenIssuanceMode } from '@/lib/ring-ledger';
+import { applyLedgerEarn, buildIdempotencyKey, ensureLegacyRingWritesAllowed, getTokenIssuanceMode } from '@/lib/ring-ledger';
 
 async function postReferralToX(referralCode: string, referrerName: string): Promise<boolean> {
   try {
@@ -103,6 +103,7 @@ export async function POST(req: Request) {
       });
 
       if (mode === 'off') {
+        ensureLegacyRingWritesAllowed();
         if (referrer) {
           await prisma.user.update({
             where: { id: referrer.id },
@@ -110,6 +111,7 @@ export async function POST(req: Request) {
           });
         }
         if (claimantUser) {
+          ensureLegacyRingWritesAllowed();
           await prisma.user.update({
             where: { id: claimantUser.id },
             data: { ringBalance: claimantNew },
@@ -121,12 +123,14 @@ export async function POST(req: Request) {
           amount: referrerAward,
           reasonCode: 'referral_reward',
           metadata: { referral_count: referralCount + 1 },
+          idempotencyKey: buildIdempotencyKey([referrerId, "referral_reward", user.id]),
         });
         await applyLedgerEarn({
           userId: user.id,
           amount: claimantBonus,
           reasonCode: 'referral_bonus',
           metadata: { referred_by: referrerId },
+          idempotencyKey: buildIdempotencyKey([user.id, "referral_bonus", referrerId]),
         });
       }
     } catch (dbErr: any) {
@@ -162,6 +166,7 @@ export async function POST(req: Request) {
         amount: 100,
         reasonCode: 'referral_share_bonus',
         metadata: { referral_code: code },
+        idempotencyKey: buildIdempotencyKey([referrerId, "referral_share_bonus", code]),
       });
       return new Response(
         JSON.stringify({

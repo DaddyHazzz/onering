@@ -98,3 +98,33 @@ def test_legacy_writes_blocked_in_shadow(monkeypatch):
     allowed, mode = balance_module.assert_legacy_ring_writes_allowed()
     assert allowed is False
     assert mode == "shadow"
+
+
+def test_balance_summary_includes_recent_entries(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(balance_module, "get_token_issuance_mode", lambda: "shadow")
+    db_session.execute(
+        text(
+            """
+            INSERT INTO ring_ledger (user_id, event_type, reason_code, amount, balance_after, metadata)
+            VALUES (:user_id, 'EARN', 'summary_test', 5, 105, '{}'::jsonb)
+            """
+        ),
+        {"user_id": test_user},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO publish_events
+            (id, user_id, platform, content_hash, published_at, platform_post_id, audit_ok, metadata)
+            VALUES (:id, :user_id, 'x', 'hash', NOW(), 'post-1', true, '{}'::jsonb)
+            """
+        ),
+        {"id": f"evt-{uuid.uuid4()}", "user_id": test_user},
+    )
+    db_session.commit()
+
+    summary = balance_module.get_balance_summary(db_session, test_user, limit=5)
+    assert "ledger_entries" in summary
+    assert "publish_events" in summary
+    assert len(summary["ledger_entries"]) >= 1
+    assert len(summary["publish_events"]) >= 1

@@ -11,8 +11,10 @@ from backend.core.database import get_db
 from backend.features.tokens.ledger import (
     get_user_ledger,
     get_token_issuance_mode,
+    spend_ring,
+    earn_ring,
 )
-from backend.features.tokens.balance import get_effective_ring_balance
+from backend.features.tokens.balance import get_effective_ring_balance, get_balance_summary
 from backend.features.tokens.publish import handle_publish_event
 from backend.features.tokens.reconciliation import (
     run_reconciliation,
@@ -33,6 +35,36 @@ class PublishEventIn(BaseModel):
     metadata: Optional[Dict] = None
 
     @field_validator("event_id", "user_id", "platform", "content_hash", "platform_post_id", "enforcement_request_id", "enforcement_receipt_id")
+    @classmethod
+    def _trim(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class SpendRequest(BaseModel):
+    user_id: str
+    amount: int
+    reason_code: str
+    idempotency_key: Optional[str] = None
+    metadata: Optional[Dict] = None
+
+    @field_validator("user_id", "reason_code", "idempotency_key")
+    @classmethod
+    def _trim(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class EarnRequest(BaseModel):
+    user_id: str
+    amount: int
+    reason_code: str
+    idempotency_key: Optional[str] = None
+    metadata: Optional[Dict] = None
+
+    @field_validator("user_id", "reason_code", "idempotency_key")
     @classmethod
     def _trim(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
@@ -72,13 +104,10 @@ def get_ledger(user_id: str, limit: int = 20, db: Session = Depends(get_db)) -> 
 
 
 @router.get("/summary/{user_id}")
-def get_summary(user_id: str, db: Session = Depends(get_db)) -> Dict:
+def get_summary(user_id: str, limit: int = 20, db: Session = Depends(get_db)) -> Dict:
     """Get canonical token balance summary."""
-    summary = get_effective_ring_balance(db, user_id)
-    return {
-        "userId": user_id,
-        **summary,
-    }
+    summary = get_balance_summary(db, user_id, limit=limit)
+    return {"userId": user_id, **summary}
 
 
 @router.post("/reconcile")
@@ -117,3 +146,39 @@ def publish_event(body: PublishEventIn, db: Session = Depends(get_db)) -> Dict:
         return result
     except Exception as exc:
         return {"ok": False, "error": "publish_event_failed", "detail": str(exc)}
+
+
+@router.post("/spend")
+def spend(body: SpendRequest, db: Session = Depends(get_db)) -> Dict:
+    """Spend RING via ledger (shadow/live only)."""
+    if not body.user_id or not body.reason_code:
+        raise HTTPException(status_code=400, detail="user_id and reason_code are required")
+    result = spend_ring(
+        db,
+        user_id=body.user_id,
+        amount=body.amount,
+        reason_code=body.reason_code,
+        metadata=body.metadata,
+        idempotency_key=body.idempotency_key,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
+@router.post("/earn")
+def earn(body: EarnRequest, db: Session = Depends(get_db)) -> Dict:
+    """Earn RING via ledger (shadow/live only)."""
+    if not body.user_id or not body.reason_code:
+        raise HTTPException(status_code=400, detail="user_id and reason_code are required")
+    result = earn_ring(
+        db,
+        user_id=body.user_id,
+        amount=body.amount,
+        reason_code=body.reason_code,
+        metadata=body.metadata,
+        idempotency_key=body.idempotency_key,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result)
+    return result

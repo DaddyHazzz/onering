@@ -267,6 +267,11 @@ unset ONERING_EXTERNAL_API_CANARY_ONLY
 
 ## 🔄 Webhook Delivery Mechanics
 
+### Webhook Event Types (Tokens)
+- ring.earned
+- ring.spent
+- ring.drift_detected
+
 ### Signing & Verification
 Every webhook includes HMAC-SHA256 signature:
 

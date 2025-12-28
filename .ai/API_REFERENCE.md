@@ -149,6 +149,8 @@ Last Updated: December 25, 2025
   Events emitted when enabled (ONERING_WEBHOOKS_ENABLED=1):
   - `draft.published` — Draft published to platform
   - `ring.earned` — RING tokens earned from issuance
+  - `ring.spent` — RING tokens spent via ledger
+  - `ring.drift_detected` — Ledger vs balance drift detected during reconciliation
   - `enforcement.failed` — Agent enforcement action failed (QA reject, receipt invalid, etc.)
 
   ### Webhook Delivery (Phase 10.3)
@@ -511,9 +513,20 @@ Notes:
   - Body: { event_id, user_id, platform, content_hash, published_at?, platform_post_id?, enforcement_request_id?, enforcement_receipt_id?, metadata? }
   - Returns: { ok: true, event_id, token_result }
 
+- POST /v1/tokens/spend
+  - Ledger-backed spend (shadow/live only).
+  - Body: { user_id, amount, reason_code, idempotency_key?, metadata? }
+  - Returns: { ok: true, mode, ledger_id, balance_after, idempotent }
+
+- POST /v1/tokens/earn
+  - Ledger-backed earn (shadow/live only).
+  - Body: { user_id, amount, reason_code, idempotency_key?, metadata? }
+  - Returns: { ok: true, mode, ledger_id?, pending_id?, balance_after?, idempotent }
+
 - GET /v1/tokens/summary/{user_id}
   - Canonical balance summary (ledger-first).
-  - Returns: { userId, mode, balance, pending_total, effective_balance, last_ledger_at, last_pending_at, guardrails_state, clerk_sync }
+  - Query: limit (default 20) for recent ledger/publish lists.
+  - Returns: { userId, mode, balance, pending_total, effective_balance, last_ledger_at, last_pending_at, guardrails_state, clerk_sync, ledger_entries, publish_events, reconciliation_status }
   - Use this for UI balances whenever ONERING_TOKEN_ISSUANCE=shadow|live.
 
 Error codes:

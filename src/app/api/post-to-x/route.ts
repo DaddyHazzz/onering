@@ -7,7 +7,7 @@ import { currentUser, clerkClient } from "@clerk/nextjs/server";
 import Redis from "ioredis";
 import { prisma } from "@/lib/db";
 import { embedThread } from "@/lib/embeddings";
-import { getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { ensureLegacyRingWritesAllowed, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 
@@ -381,6 +381,9 @@ export async function POST(req: NextRequest) {
 
       if (!dbUser) {
         // Create user if doesn't exist
+        if (tokenIssuanceMode === "off") {
+          ensureLegacyRingWritesAllowed();
+        }
         dbUser = await prisma.user.create({
           data: {
             clerkId: userId,
@@ -426,6 +429,7 @@ export async function POST(req: NextRequest) {
 
       if (tokenMode === "off" && !createdUser) {
         // Increment ring balance only when token issuance is off (legacy behavior).
+        ensureLegacyRingWritesAllowed();
         dbUser = await prisma.user.update({
           where: { id: dbUser.id },
           data: {

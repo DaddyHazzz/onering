@@ -1,6 +1,6 @@
 import { currentUser, clerkClient } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/db';
-import { applyLedgerSpend, getEffectiveRingBalance, getTokenIssuanceMode } from '@/lib/ring-ledger';
+import { applyLedgerSpend, buildIdempotencyKey, getEffectiveRingBalance, getTokenIssuanceMode } from '@/lib/ring-ledger';
 
 export async function POST(req: Request) {
   const user = await currentUser();
@@ -27,6 +27,7 @@ export async function POST(req: Request) {
         amount: price,
         reasonCode: "market_lease",
         metadata: { name },
+        idempotencyKey: buildIdempotencyKey([user.id, "market_lease", name]),
       });
       if (!spend.ok) {
         return new Response(JSON.stringify({ error: 'insufficient RING', code: spend.error || 'LEGACY_RING_WRITE_BLOCKED' }), { status: 402, headers: { 'content-type': 'application/json' } });

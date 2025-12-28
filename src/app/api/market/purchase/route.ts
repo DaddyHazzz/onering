@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
-import { applyLedgerEarn, applyLedgerSpend, getEffectiveRingBalance, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, applyLedgerSpend, buildIdempotencyKey, ensureLegacyRingWritesAllowed, getEffectiveRingBalance, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   listingId: z.string().min(1),
@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
 
     const mode = getTokenIssuanceMode();
     if (mode === "off") {
+      ensureLegacyRingWritesAllowed();
       // Check buyer has enough RING
       if (buyer.ringBalance < listing.priceRING) {
         return Response.json(
@@ -83,6 +84,7 @@ export async function POST(req: NextRequest) {
         amount: listing.priceRING,
         reasonCode: "market_purchase",
         metadata: { listing_id: listingId },
+        idempotencyKey: buildIdempotencyKey([buyerId, "market_purchase", listingId]),
       });
       if (!spend.ok) {
         return Response.json(
@@ -95,6 +97,7 @@ export async function POST(req: NextRequest) {
         amount: listing.priceRING,
         reasonCode: "market_sale",
         metadata: { listing_id: listingId },
+        idempotencyKey: buildIdempotencyKey([listing.user.clerkId, "market_sale", listingId]),
       });
       if (!earn.ok) {
         return Response.json(

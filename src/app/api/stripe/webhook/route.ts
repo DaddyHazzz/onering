@@ -2,7 +2,7 @@
 import Stripe from "stripe";
 import { clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, buildIdempotencyKey, ensureLegacyRingWritesAllowed, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 // Some @types may narrow allowed apiVersion literals; cast to `any` to avoid
 // a type-level mismatch while still passing the desired string at runtime.
@@ -32,6 +32,9 @@ export async function POST(req: Request) {
           // Upsert user in Postgres via Prisma
           const tokenMode = getTokenIssuanceMode();
           const ringAward = 500;
+          if (tokenMode === "off") {
+            ensureLegacyRingWritesAllowed();
+          }
           const user = await prisma.user.upsert({
             where: { clerkId },
             update: {
@@ -51,6 +54,7 @@ export async function POST(req: Request) {
               amount: ringAward,
               reasonCode: "stripe_credit",
               metadata: { event_id: event.id },
+              idempotencyKey: buildIdempotencyKey([clerkId, "stripe_credit", event.id]),
             });
             if (!earned.ok) {
               console.warn("[stripe/webhook] ledger earn blocked:", earned.error);

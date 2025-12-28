@@ -33,11 +33,13 @@ export async function POST(req: NextRequest) {
       return Response.json({ success: true, ring });
     }
 
+    const idempotencyKey = req.headers.get("Idempotency-Key") || undefined;
     const earned = await applyLedgerEarn({
       userId,
       amount,
       reasonCode: "manual_mine",
       metadata: { source: "mine-ring" },
+      idempotencyKey,
     });
     if (!earned.ok) {
       return Response.json({ error: "Mine blocked", code: earned.error || "LEGACY_RING_WRITE_BLOCKED" }, { status: 400 });

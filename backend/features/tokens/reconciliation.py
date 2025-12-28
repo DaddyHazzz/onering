@@ -18,6 +18,7 @@ from backend.features.tokens.ledger import (
     get_user_balance,
     update_user_balance,
 )
+from backend.features.external.webhooks import enqueue_webhook_event
 
 
 def run_reconciliation(db: Session) -> Dict:
@@ -82,7 +83,35 @@ def run_reconciliation(db: Session) -> Dict:
 
             if abs(ledger_sum) > max_amount or abs(ledger_sum - current_balance) > max_amount:
                 mismatch["overflow"] = True
+                enqueue_webhook_event(
+                    db,
+                    event_type="ring.drift_detected",
+                    payload={
+                        "user_id": user_id,
+                        "ledger_sum": ledger_sum,
+                        "current_balance": current_balance,
+                        "difference": ledger_sum - current_balance,
+                        "mode": mode,
+                        "overflow": True,
+                        "reconciled_at": datetime.utcnow().isoformat(),
+                    },
+                    user_id=user_id,
+                )
                 continue
+
+            enqueue_webhook_event(
+                db,
+                event_type="ring.drift_detected",
+                payload={
+                    "user_id": user_id,
+                    "ledger_sum": ledger_sum,
+                    "current_balance": current_balance,
+                    "difference": ledger_sum - current_balance,
+                    "mode": mode,
+                    "reconciled_at": datetime.utcnow().isoformat(),
+                },
+                user_id=user_id,
+            )
             
             # In shadow mode, log adjustment (don't apply)
             if mode == "shadow":

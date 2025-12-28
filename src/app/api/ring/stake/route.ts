@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { applyLedgerSpend, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerSpend, ensureLegacyRingWritesAllowed, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const stakeSchema = z.object({
   amount: z.number().int().positive("Amount must be positive"),
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
 
     const mode = getTokenIssuanceMode();
     if (mode === "off") {
+      ensureLegacyRingWritesAllowed();
       if (dbUser.ringBalance < amount) {
         return Response.json(
           { error: `Insufficient RING. Need ${amount}, have ${dbUser.ringBalance}` },
@@ -41,11 +42,13 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
+      const idempotencyKey = req.headers.get("Idempotency-Key") || undefined;
       const spend = await applyLedgerSpend({
         userId,
         amount,
         reasonCode: "stake",
         metadata: { duration_days: durationDays, apr },
+        idempotencyKey,
       });
       if (!spend.ok) {
         return Response.json(
@@ -68,6 +71,7 @@ export async function POST(req: NextRequest) {
 
     if (mode === "off") {
       // Deduct from balance (legacy off mode only)
+      ensureLegacyRingWritesAllowed();
       await prisma.user.update({
         where: { id: dbUser.id },
         data: {

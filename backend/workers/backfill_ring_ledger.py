@@ -27,6 +27,8 @@ def backfill_balances(*, dry_run: bool, starting_balance: int = 0) -> Dict:
         "updated": 0,
         "negative_balances": 0,
         "mismatched_rows": 0,
+        "legacy_import_candidates": 0,
+        "legacy_imported": 0,
         "publish_events_missing_ledger": 0,
         "dry_run": dry_run,
     }
@@ -94,6 +96,41 @@ def backfill_balances(*, dry_run: bool, starting_balance: int = 0) -> Dict:
             )
         ).fetchone()
         report["publish_events_missing_ledger"] = int(missing[0] if missing else 0)
+
+    with get_db_session() as session:
+        legacy_rows = session.execute(
+            text(
+                """
+                SELECT "clerkId", "ringBalance"
+                FROM users
+                WHERE "ringBalance" > 0
+                  AND "clerkId" NOT IN (SELECT DISTINCT user_id FROM ring_ledger)
+                """
+            )
+        ).fetchall()
+
+    for clerk_id, ring_balance in legacy_rows:
+        report["legacy_import_candidates"] += 1
+        if dry_run:
+            continue
+        with get_db_session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO ring_ledger
+                    (user_id, event_type, reason_code, amount, balance_after, metadata)
+                    VALUES (:user_id, 'ADJUSTMENT', 'legacy_import', :amount, :balance_after, CAST(:metadata AS jsonb))
+                    """
+                ),
+                {
+                    "user_id": clerk_id,
+                    "amount": int(ring_balance),
+                    "balance_after": int(ring_balance),
+                    "metadata": '{"source": "legacy_balance"}',
+                },
+            )
+            session.commit()
+        report["legacy_imported"] += 1
 
     return report
 

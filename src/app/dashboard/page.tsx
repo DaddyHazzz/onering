@@ -417,6 +417,16 @@ export default function Dashboard() {
             <div className="flex items-center gap-6">
                 <h1 className="text-6xl font-black">OneRing</h1>
                 <div className="ml-4 px-4 py-2 bg-yellow-300 text-black rounded-lg font-bold">RING: {ring}</div>
+                {tokenSummary?.mode && tokenSummary.mode !== "off" && (
+                  <span className="px-2 py-1 rounded-full text-xs bg-emerald-500/20 text-emerald-200 border border-emerald-400/40">
+                    ledger-truth
+                  </span>
+                )}
+                {tokenSummary?.pending_total ? (
+                  <span className="px-2 py-1 rounded-full text-xs bg-yellow-500/20 text-yellow-200 border border-yellow-400/40">
+                    pending {tokenSummary.pending_total}
+                  </span>
+                ) : null}
                 {streak && (
                   <div className="ml-2 px-4 py-2 bg-orange-400 text-black rounded-lg font-bold">
                     🔥 {streak.current_length} day streak

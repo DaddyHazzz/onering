@@ -4,7 +4,7 @@ import { z } from "zod";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
 import Redis from "ioredis";
 import { prisma } from "@/lib/db";
-import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, buildIdempotencyKey, ensureLegacyRingWritesAllowed, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const schema = z.object({
   content: z.string().min(1),
@@ -189,6 +189,9 @@ export async function POST(req: NextRequest) {
       });
 
       if (!dbUser) {
+        if (tokenMode === "off") {
+          ensureLegacyRingWritesAllowed();
+        }
         dbUser = await prisma.user.create({
           data: {
             clerkId: userId,
@@ -196,6 +199,7 @@ export async function POST(req: NextRequest) {
           },
         });
       } else if (tokenMode === "off") {
+        ensureLegacyRingWritesAllowed();
         dbUser = await prisma.user.update({
           where: { id: dbUser.id },
           data: {
@@ -210,6 +214,7 @@ export async function POST(req: NextRequest) {
           amount: ringAward,
           reasonCode: "social_post:ig",
           metadata: { externalId: result.id },
+          idempotencyKey: buildIdempotencyKey([userId, "social_post:ig", result.id || "unknown"]),
         });
         if (!earned.ok) {
           console.warn("[post-to-ig] ledger earn blocked:", earned.error);

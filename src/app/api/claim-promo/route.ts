@@ -2,7 +2,7 @@
 import { NextRequest } from "next/server";
 import { currentUser, clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, buildIdempotencyKey, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
         amount: award,
         reasonCode: "promo_post5",
         metadata: { post_count: posts.length },
+        idempotencyKey: buildIdempotencyKey([userId, "promo_post5", code]),
       });
       if (!earned.ok) {
         return Response.json({ error: "Promo blocked", code: earned.error || "LEGACY_RING_WRITE_BLOCKED" }, { status: 400 });

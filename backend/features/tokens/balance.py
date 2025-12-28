@@ -11,7 +11,8 @@ from typing import Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from backend.features.tokens.ledger import get_token_issuance_mode
+from backend.features.tokens.ledger import get_token_issuance_mode, get_user_ledger
+from backend.features.tokens.reconciliation import get_reconciliation_summary
 
 
 def assert_legacy_ring_writes_allowed() -> tuple[bool, str]:
@@ -161,4 +162,49 @@ def get_effective_ring_balance(db: Session, user_id: str) -> Dict:
         "last_pending_at": _iso(last_pending_at),
         "guardrails_state": guardrails_state,
         "clerk_sync": clerk_sync,
+    }
+
+
+def get_balance_summary(db: Session, user_id: str, *, limit: int = 20) -> Dict:
+    """
+    Expanded balance summary with recent ledger and publish events.
+    """
+    summary = get_effective_ring_balance(db, user_id)
+
+    ledger_entries = get_user_ledger(db, user_id, limit)
+    publish_rows = db.execute(
+        text(
+            """
+            SELECT id, platform, published_at, platform_post_id, token_mode,
+                   token_issued_amount, token_pending_amount, token_reason_code, created_at
+            FROM publish_events
+            WHERE user_id = :user_id
+            ORDER BY created_at DESC
+            LIMIT :limit
+            """
+        ),
+        {"user_id": user_id, "limit": limit},
+    ).fetchall()
+    publish_events = [
+        {
+            "event_id": str(row[0]),
+            "platform": row[1],
+            "published_at": _iso(row[2]),
+            "platform_post_id": row[3],
+            "token_mode": row[4],
+            "token_issued_amount": row[5],
+            "token_pending_amount": row[6],
+            "token_reason_code": row[7],
+            "created_at": _iso(row[8]),
+        }
+        for row in publish_rows
+    ]
+
+    reconciliation_summary = get_reconciliation_summary(db)
+
+    return {
+        **summary,
+        "ledger_entries": ledger_entries,
+        "publish_events": publish_events,
+        "reconciliation_status": reconciliation_summary,
     }

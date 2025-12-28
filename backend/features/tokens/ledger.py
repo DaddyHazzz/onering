@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.core.database import get_db
+from backend.features.external.webhooks import enqueue_webhook_event
 
 # Guardrail constants (configurable via env)
 DAILY_EARN_CAP = int(os.getenv("RING_DAILY_EARN_CAP", "1000"))
@@ -134,6 +135,280 @@ def update_user_balance(db: Session, user_id: str, new_balance: int) -> None:
         {"user_id": user_id, "balance": new_balance},
     )
     db.commit()
+
+
+def _get_pending_total(db: Session, user_id: str) -> int:
+    row = db.execute(
+        text(
+            """
+            SELECT COALESCE(SUM(amount), 0)
+            FROM ring_pending
+            WHERE user_id = :user_id AND status = 'pending'
+            """
+        ),
+        {"user_id": user_id},
+    ).fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def _get_shadow_ledger_delta(db: Session, user_id: str) -> int:
+    row = db.execute(
+        text(
+            """
+            SELECT COALESCE(SUM(amount), 0)
+            FROM ring_ledger
+            WHERE user_id = :user_id
+              AND event_type IN ('SPEND', 'PENALTY', 'ADJUSTMENT')
+            """
+        ),
+        {"user_id": user_id},
+    ).fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def _get_latest_ledger_balance(db: Session, user_id: str) -> Optional[int]:
+    row = db.execute(
+        text(
+            """
+            SELECT balance_after
+            FROM ring_ledger
+            WHERE user_id = :user_id
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"user_id": user_id},
+    ).fetchone()
+    if not row:
+        return None
+    return int(row[0]) if row[0] is not None else None
+
+
+def _get_effective_balance_for_spend(db: Session, user_id: str, mode: str) -> int:
+    legacy_balance = get_user_balance(db, user_id)
+    if mode == "live":
+        return _get_latest_ledger_balance(db, user_id) or legacy_balance
+    if mode == "shadow":
+        pending_total = _get_pending_total(db, user_id)
+        shadow_delta = _get_shadow_ledger_delta(db, user_id)
+        return legacy_balance + pending_total + shadow_delta
+    return legacy_balance
+
+
+def _find_idempotent_ledger_entry(db: Session, user_id: str, idempotency_key: str) -> Optional[Dict]:
+    row = db.execute(
+        text(
+            """
+            SELECT id, event_type, amount, balance_after
+            FROM ring_ledger
+            WHERE user_id = :user_id
+              AND metadata->>'idempotency_key' = :idempotency_key
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"user_id": user_id, "idempotency_key": idempotency_key},
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "ledger_id": str(row[0]),
+        "event_type": row[1],
+        "amount": int(row[2]),
+        "balance_after": int(row[3]) if row[3] is not None else None,
+    }
+
+
+def _find_idempotent_pending_entry(db: Session, user_id: str, idempotency_key: str) -> Optional[Dict]:
+    row = db.execute(
+        text(
+            """
+            SELECT id, amount
+            FROM ring_pending
+            WHERE user_id = :user_id
+              AND metadata->>'idempotency_key' = :idempotency_key
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"user_id": user_id, "idempotency_key": idempotency_key},
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "pending_id": str(row[0]),
+        "amount": int(row[1]),
+    }
+
+
+def spend_ring(
+    db: Session,
+    *,
+    user_id: str,
+    amount: int,
+    reason_code: str,
+    metadata: Optional[Dict] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict:
+    mode = get_token_issuance_mode()
+    if mode == "off":
+        return {"ok": False, "error": "TOKEN_ISSUANCE_OFF", "mode": mode}
+    if amount <= 0:
+        return {"ok": False, "error": "INVALID_AMOUNT", "mode": mode}
+
+    if idempotency_key:
+        existing = _find_idempotent_ledger_entry(db, user_id, idempotency_key)
+        if existing:
+            return {
+                "ok": True,
+                "mode": mode,
+                "ledger_id": existing["ledger_id"],
+                "balance_after": existing["balance_after"],
+                "idempotent": True,
+            }
+
+    current_balance = _get_effective_balance_for_spend(db, user_id, mode)
+    if current_balance < amount:
+        return {"ok": False, "error": "INSUFFICIENT_BALANCE", "mode": mode}
+
+    balance_after = current_balance - amount
+    meta = metadata or {}
+    if idempotency_key:
+        meta["idempotency_key"] = idempotency_key
+
+    entry = LedgerEntry(
+        user_id=user_id,
+        event_type="SPEND",
+        reason_code=reason_code,
+        amount=-abs(amount),
+        balance_after=balance_after,
+        metadata=meta,
+    )
+    ledger_id = append_ledger_entry(db, entry)
+
+    if mode == "live":
+        update_user_balance(db, user_id, balance_after)
+
+    enqueue_webhook_event(
+        db,
+        event_type="ring.spent",
+        payload={
+            "user_id": user_id,
+            "amount": amount,
+            "reason_code": reason_code,
+            "mode": mode,
+            "ledger_id": ledger_id,
+            "balance_after": balance_after,
+            "idempotency_key": idempotency_key,
+        },
+        user_id=user_id,
+        event_id=f"spend_{ledger_id}",
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "ledger_id": ledger_id,
+        "balance_after": balance_after,
+        "idempotent": False,
+    }
+
+
+def earn_ring(
+    db: Session,
+    *,
+    user_id: str,
+    amount: int,
+    reason_code: str,
+    metadata: Optional[Dict] = None,
+    idempotency_key: Optional[str] = None,
+) -> Dict:
+    mode = get_token_issuance_mode()
+    if mode == "off":
+        return {"ok": False, "error": "TOKEN_ISSUANCE_OFF", "mode": mode}
+    if amount <= 0:
+        return {"ok": False, "error": "INVALID_AMOUNT", "mode": mode}
+
+    if idempotency_key:
+        existing_pending = _find_idempotent_pending_entry(db, user_id, idempotency_key)
+        if existing_pending:
+            return {
+                "ok": True,
+                "mode": mode,
+                "pending_id": existing_pending["pending_id"],
+                "amount": existing_pending["amount"],
+                "idempotent": True,
+            }
+        existing_ledger = _find_idempotent_ledger_entry(db, user_id, idempotency_key)
+        if existing_ledger:
+            return {
+                "ok": True,
+                "mode": mode,
+                "ledger_id": existing_ledger["ledger_id"],
+                "balance_after": existing_ledger["balance_after"],
+                "amount": existing_ledger["amount"],
+                "idempotent": True,
+            }
+
+    meta = metadata or {}
+    if idempotency_key:
+        meta["idempotency_key"] = idempotency_key
+
+    if mode == "shadow":
+        pending_id = add_pending_reward(db, user_id, amount, reason_code, meta)
+        enqueue_webhook_event(
+            db,
+            event_type="ring.earned",
+            payload={
+                "user_id": user_id,
+                "amount": amount,
+                "reason_code": reason_code,
+                "mode": mode,
+                "pending_id": pending_id,
+                "idempotency_key": idempotency_key,
+            },
+            user_id=user_id,
+            event_id=f"earn_pending_{pending_id}",
+        )
+        return {"ok": True, "mode": mode, "pending_id": pending_id, "amount": amount, "idempotent": False}
+
+    current_balance = _get_latest_ledger_balance(db, user_id) or get_user_balance(db, user_id)
+    balance_after = current_balance + amount
+    entry = LedgerEntry(
+        user_id=user_id,
+        event_type="EARN",
+        reason_code=reason_code,
+        amount=amount,
+        balance_after=balance_after,
+        metadata=meta,
+    )
+    ledger_id = append_ledger_entry(db, entry)
+    update_user_balance(db, user_id, balance_after)
+
+    enqueue_webhook_event(
+        db,
+        event_type="ring.earned",
+        payload={
+            "user_id": user_id,
+            "amount": amount,
+            "reason_code": reason_code,
+            "mode": mode,
+            "ledger_id": ledger_id,
+            "balance_after": balance_after,
+            "idempotency_key": idempotency_key,
+        },
+        user_id=user_id,
+        event_id=f"earn_{ledger_id}",
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "ledger_id": ledger_id,
+        "balance_after": balance_after,
+        "amount": amount,
+        "idempotent": False,
+    }
 
 
 def check_guardrails(db: Session, user_id: str) -> tuple[bool, List[str], int]:

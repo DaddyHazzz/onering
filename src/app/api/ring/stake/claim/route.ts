@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, buildIdempotencyKey, ensureLegacyRingWritesAllowed, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const claimSchema = z.object({
   stakeId: z.string().uuid(),
@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
 
     const mode = getTokenIssuanceMode();
     if (mode === "off") {
+      ensureLegacyRingWritesAllowed();
       await prisma.user.update({
         where: { id: stake.userId },
         data: {
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
         amount: claimable,
         reasonCode: "stake_yield",
         metadata: { stake_id: stakeId },
+        idempotencyKey: buildIdempotencyKey([userId, "stake_yield", stakeId, String(claimable)]),
       });
       if (!earn.ok) {
         return Response.json(

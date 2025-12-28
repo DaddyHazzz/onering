@@ -257,10 +257,26 @@ Canonical balance summary (ledger-first).
 }
 ```
 
+Additional fields:
+- `ledger_entries` (recent, default 20)
+- `publish_events` (recent, default 20)
+- `reconciliation_status`
+- Optional query param: `limit` to bound recent lists.
+
 
 ### GET `/v1/tokens/ledger/{user_id}`
 
 Returns recent ledger entries (last 20 by default).
+
+### POST `/v1/tokens/spend`
+
+Ledger-backed spend (shadow/live only).
+Body: `{ user_id, amount, reason_code, idempotency_key?, metadata? }`
+
+### POST `/v1/tokens/earn`
+
+Ledger-backed earn (shadow/live only).
+Body: `{ user_id, amount, reason_code, idempotency_key?, metadata? }`
 
 ### POST `/v1/tokens/publish`
 

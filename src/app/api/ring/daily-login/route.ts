@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-handler";
-import { applyLedgerEarn, getEffectiveRingBalance, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, buildIdempotencyKey, ensureLegacyRingWritesAllowed, getEffectiveRingBalance, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 const DAILY_LOGIN_BONUS = 10;
 
@@ -23,25 +23,29 @@ export async function POST(req: NextRequest) {
     });
 
     if (!user) {
+      const now = new Date();
       user = await prisma.user.create({
         data: {
           clerkId: userId,
           ringBalance: 0,
-          lastLoginAt: new Date(),
+          lastLoginAt: now,
         },
       });
       const mode = getTokenIssuanceMode();
       if (mode === "off") {
+        ensureLegacyRingWritesAllowed();
         user = await prisma.user.update({
           where: { id: user.id },
           data: { ringBalance: DAILY_LOGIN_BONUS },
         });
       } else {
+        const idempotencyKey = buildIdempotencyKey([userId, "daily_login", now.toISOString().slice(0, 10)]);
         await applyLedgerEarn({
           userId,
           amount: DAILY_LOGIN_BONUS,
           reasonCode: "daily_login",
           metadata: { first_login: true },
+          idempotencyKey,
         });
       }
       console.log("[ring/daily-login] created user with first login bonus:", user.id);
@@ -72,6 +76,7 @@ export async function POST(req: NextRequest) {
     const mode = getTokenIssuanceMode();
     if (mode === "off") {
       // Award daily bonus (legacy)
+      ensureLegacyRingWritesAllowed();
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -84,10 +89,12 @@ export async function POST(req: NextRequest) {
         where: { id: user.id },
         data: { lastLoginAt: now },
       });
+      const idempotencyKey = buildIdempotencyKey([userId, "daily_login", now.toISOString().slice(0, 10)]);
       await applyLedgerEarn({
         userId,
         amount: DAILY_LOGIN_BONUS,
         reasonCode: "daily_login",
+        idempotencyKey,
       });
     }
 

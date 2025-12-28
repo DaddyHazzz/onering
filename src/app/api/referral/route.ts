@@ -2,7 +2,7 @@
 import { NextRequest } from "next/server";
 import { clerkClient, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { applyLedgerEarn, getTokenIssuanceMode } from "@/lib/ring-ledger";
+import { applyLedgerEarn, buildIdempotencyKey, getTokenIssuanceMode } from "@/lib/ring-ledger";
 
 // Mock referral storage (in-memory)
 const referrals: Record<string, string> = { "TESTCODE": "referrer-user-id" };
@@ -50,12 +50,14 @@ export async function POST(req: NextRequest) {
         amount: 100,
         reasonCode: "referral_mock",
         metadata: { referral_code: referralCode },
+        idempotencyKey: buildIdempotencyKey([userId, "referral_mock", referralCode]),
       });
       await applyLedgerEarn({
         userId: referrer,
         amount: 100,
         reasonCode: "referral_mock",
         metadata: { referral_code: referralCode },
+        idempotencyKey: buildIdempotencyKey([referrer, "referral_mock", referralCode]),
       });
       userRing = 100;
       refRing = 100;

@@ -16,6 +16,8 @@ from backend.features.tokens.ledger import (
     get_user_ledger,
     get_pending_rewards,
     add_pending_reward,
+    spend_ring,
+    earn_ring,
     DAILY_EARN_CAP,
     MIN_EARN_INTERVAL_SECONDS,
 )
@@ -382,3 +384,58 @@ class TestPendingRewards:
         pending = get_pending_rewards(db_session, clean_test_user)
         assert pending["totalPending"] == 25
         assert pending["count"] == 2
+
+
+class TestSpendEarn:
+    def test_spend_live_updates_balance(self, db_session, clean_test_user, monkeypatch):
+        monkeypatch.setattr("backend.features.tokens.ledger.get_token_issuance_mode", lambda: "live")
+        update_user_balance(db_session, clean_test_user, 100)
+
+        result = spend_ring(
+            db_session,
+            user_id=clean_test_user,
+            amount=10,
+            reason_code="test_spend",
+            metadata={"source": "test"},
+        )
+        assert result["ok"] is True
+        assert result["balance_after"] == 90
+        assert get_user_balance(db_session, clean_test_user) == 90
+
+    def test_earn_shadow_creates_pending(self, db_session, clean_test_user, monkeypatch):
+        monkeypatch.setattr("backend.features.tokens.ledger.get_token_issuance_mode", lambda: "shadow")
+
+        result = earn_ring(
+            db_session,
+            user_id=clean_test_user,
+            amount=15,
+            reason_code="test_earn",
+            metadata={"source": "test"},
+        )
+        assert result["ok"] is True
+        assert result["pending_id"] is not None
+        pending = get_pending_rewards(db_session, clean_test_user)
+        assert pending["totalPending"] >= 15
+
+    def test_spend_idempotent(self, db_session, clean_test_user, monkeypatch):
+        monkeypatch.setattr("backend.features.tokens.ledger.get_token_issuance_mode", lambda: "live")
+        update_user_balance(db_session, clean_test_user, 50)
+
+        first = spend_ring(
+            db_session,
+            user_id=clean_test_user,
+            amount=5,
+            reason_code="test_spend",
+            idempotency_key="idemp-1",
+        )
+        second = spend_ring(
+            db_session,
+            user_id=clean_test_user,
+            amount=5,
+            reason_code="test_spend",
+            idempotency_key="idemp-1",
+        )
+        assert first["ok"] is True
+        assert second["ok"] is True
+        assert second.get("idempotent") is True
+        assert first["ledger_id"] == second["ledger_id"]
