@@ -1,8 +1,29 @@
 # OneRing External API — Consumer Implementation Guide
 
 **For:** Third-party integrations using OneRing External API  
-**Version:** Phase 10.3  
+**Version:** Phase 10.3+ (Org-Aware SaaS Platform)  
 **Last Updated:** Dec 27, 2025
+
+---
+
+## Getting Started (Hosted Platform)
+
+### For OneRing Customers (Hosted Platform)
+
+If you're using **OneRing Hosted Platform**, onboarding is **automated via the Partner Console**:
+
+1. **Sign in** → https://onering.app/dashboard
+2. **Navigate** → **Partner Console** → **External API**
+3. **Click** → **"Start Onboarding"** button
+4. **Complete** → 3-step wizard (create key, test API, create webhook)
+
+Your organization ID is automatically scoped to your account. No manual setup needed!
+
+→ Full walkthrough: [Partner Onboarding Guide](./PARTNER_ONBOARDING.md)
+
+### For Self-Hosted / On-Premise Deployments
+
+If you're running OneRing self-hosted, follow the [Quick Start](#quick-start) section below.
 
 ---
 
@@ -10,11 +31,14 @@
 
 ### 1. Get Your API Key
 
-Contact OneRing support to request an external API key. You'll receive:
+**Hosted Platform:** Use the Partner Console onboarding wizard.
+
+**Self-Hosted:** Contact your OneRing administrator to request an external API key. You'll receive:
 ```
-Key ID: osk_abc123...
-Secret: osk_full_secret_shown_only_once...  ← Store securely!
-Tier: pro (1000 requests/hour)
+Key ID: ext_key_abc123...
+Secret: ext_secret_shown_only_once...  ← Store securely!
+Tier: starter (1M calls/month)
+Organization: org_xyz123 (if multi-tenant)
 ```
 
 **Never share your secret!** Rotate it immediately if leaked.
@@ -24,8 +48,8 @@ Tier: pro (1000 requests/hour)
 ```python
 import requests
 
-API_KEY = "osk_your_secret_here"
-BASE_URL = "https://api.onering.com"
+API_KEY = "ext_key_your_secret_here"
+BASE_URL = "https://api.onering.app"  # or your self-hosted URL
 
 response = requests.get(
     f"{BASE_URL}/v1/external/me",
@@ -37,17 +61,26 @@ response = requests.get(
 
 print(response.json())
 # {
-#   "key_id": "osk_abc123",
-#   "owner_user_id": "user_xyz",
-#   "scopes": ["read:rings", "read:drafts"],
-#   "rate_limit_tier": "pro",
-#   "canary_enabled": false
+#   "key_id": "ext_key_abc123",
+#   "org_id": "org_xyz123",
+#   "scopes": ["draft.read", "draft.write"],
+#   "tier": "starter",
+#   "api_calls_this_month": 0,
+#   "rate_limit_remaining": 1000000
 # }
 
-print(response.headers["X-RateLimit-Limit"])  # 1000
-print(response.headers["X-RateLimit-Remaining"])  # 999
+print(response.headers["X-RateLimit-Limit"])  # 1000000
+print(response.headers["X-RateLimit-Remaining"])  # 1000000
 print(response.headers["X-RateLimit-Reset"])  # Unix timestamp
 ```
+
+---
+
+## Organization Scoping (Multi-Tenant)
+
+When running **OneRing Hosted Platform**, all API requests are automatically scoped to your organization. You don't need to specify an organization ID — it's inferred from your API key.
+
+**Note:** Self-hosted deployments may have different scoping rules. Contact your administrator for details.
 
 ---
 

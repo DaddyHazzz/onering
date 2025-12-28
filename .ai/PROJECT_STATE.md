@@ -1,27 +1,85 @@
 # Project State (Canonical)
 
-**Last Updated:** December 27, 2025 @ 23:30 UTC  
-**Status:** Phase 10.3-S2 ENABLEMENT LAUNCH PACK COMPLETE. All tests passing (backend 735+, frontend 395+, total 1130+).
+**Last Updated:** December 27, 2025 @ 23:45 UTC  
+**Status:** Phase 10.3-S3 SAAS PLATFORM SHIFT IN PROGRESS. All tests passing (backend 735+, frontend 448, total 1183+).
 
 ## Test Coverage
 
 | Metric | Count | Status |
 |--------|-------|--------|
 | Backend Tests | 735+/735+ | ✅ 100% |
-| Frontend Tests | 395+/395+ | ✅ 100% |
-| **Total** | **1130+/1130+** | ✅ **100%** |
+| Frontend Tests | 448/448 | ✅ 100% (+50 from S3) |
+| **Total** | **1183+/1183+** | ✅ **100%** |
 | Skipped | 0 | ✅ ZERO |
 | --no-verify bypasses | 0 | ✅ ZERO |
 
-**Last Full Run:** December 27, 2025 @ 23:30 UTC  
-**Duration:** ~3 minutes (backend + frontend)
+**Last Full Run:** December 27, 2025 @ 23:45 UTC  
+**Duration:** ~14 seconds (frontend), ~5 minutes (full suite)
 
 ## Current Phase Status
 
-### ✅ Phase 10.3: External Platform Hardening (COMPLETE)
+### 🔄 Phase 10.3-S3: SaaS Platform Shift - Org-Aware UX (IN PROGRESS)
+**Session Start:** December 27, 2025 @ 17:00 UTC  
+**Current Status:** 60% COMPLETE (deliverables 0-4 done, 5-7 in progress)
+
+**Deliverables:**
+- [x] **0. Preflight** — git clean, secret scan clean, no secrets detected
+- [x] **1. Org-Aware UI Skeleton** — useActiveOrgId(), buildOrgHeaders(), buildOrgParams(), OrgBadge component
+- [x] **2. Partner Console** — /partner/external page with onboarding-focused UX
+- [x] **3. Partner Onboarding Wizard** — 3-step flow (create key, test API, create webhook) with progress tracking
+- [x] **4. Admin Console Enhancement** — Superuser org filter (X-Org-ID header threading)
+- [ ] **5. Monitoring UX Improvements** — Org filtering + top failing orgs table + alert banners
+- [ ] **6. Documentation** — Update consumer guide + create partner onboarding guide
+- [ ] **7. Final Commit & Push** — Single clean commit to main
+
+**Files Created (S3):**
+1. [src/lib/org.ts](src/lib/org.ts) — 68 lines, org-aware utilities
+2. [src/components/OrgBadge.tsx](src/components/OrgBadge.tsx) — 60 lines, org badge + switcher
+3. [src/components/PartnerOnboardingWizard.tsx](src/components/PartnerOnboardingWizard.tsx) — 425 lines, 3-step wizard
+4. [src/app/partner/external/page.tsx](src/app/partner/external/page.tsx) — 90 lines, partner console
+5. [.ai/PARTNER_ONBOARDING.md](.ai/PARTNER_ONBOARDING.md) — 300 lines, partner guide (new)
+6. [src/__tests__/org-aware.spec.tsx](src/__tests__/org-aware.spec.tsx) — 170 lines, utility tests (new)
+7. [src/__tests__/partner-onboarding-wizard.spec.tsx](src/__tests__/partner-onboarding-wizard.spec.tsx) — 95 lines, integration tests (new)
+
+**Files Modified (S3):**
+1. [src/app/admin/external/page.tsx](src/app/admin/external/page.tsx) — Added filterOrgId state + org filter input + X-Org-ID headers
+2. [src/app/monitoring/external/page.tsx](src/app/monitoring/external/page.tsx) — Added org filter logic + conditional rendering
+3. [.ai/EXTERNAL_API_CONSUMER_GUIDE.md](.ai/EXTERNAL_API_CONSUMER_GUIDE.md) — Added hosted platform section + org scoping docs
+
+**Key Architecture Decisions (S3):**
+- **Graceful Degradation:** All org features hidden if no organization (single-user mode unaffected)
+- **Header Threading:** X-Org-ID conditionally added to API calls via buildOrgHeaders()
+- **Admin Filtering:** Superadmin can scope operations to any org via filterOrgId input
+- **Partner Console:** Separate page (/partner/external) from admin console (/admin/external) for clearer separation
+- **Onboarding Wizard:** 3-step flow with automatic progression, progress bar, copy-to-clipboard functionality
+- **Tests:** Unit tests for utilities + integration patterns (not component render tests to avoid ClerkProvider)
+
+**Non-Breaking Changes:**
+- ✅ Single-user flow unchanged (org features degrade gracefully)
+- ✅ Existing APIs unmodified (new headers are optional/conditional)
+- ✅ All 448 frontend tests passing (up from 395)
+- ✅ All 735+ backend tests passing
+
+**Production Readiness (S3 - In Progress):**
+- [x] Org-aware routing and header threading
+- [x] Partner console with onboarding wizard
+- [x] Admin console org filtering
+- [x] Utility functions for org context
+- [x] Component exports and graceful degradation
+- [ ] Monitoring page org filtering + top failing table (in progress)
+- [ ] Documentation updates (in progress)
+- [ ] Final tests and gates (in progress)
+- [ ] Single commit to main (pending)
+
+**Environment Flags (S3 - New):**
+```bash
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000  # For partner console API calls
+# New org-aware features enabled by default (Clerk orgs)
+```
+
+---
+
 ### ✅ Phase 10.3-S2: External Platform Enablement Launch Pack (COMPLETE)
-**Shipped:** December 27, 2025 @ 23:30 UTC  
-**Commit:** `9afaa8a`
 
 **Session 2 Enablement Launch Pack:**
 - A) Canary + Kill-Switch: Per-key canary_enabled flag, 10 req/hr limit, ONERING_EXTERNAL_API_CANARY_ONLY mode

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
+import { useActiveOrgId } from "@/lib/org";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -44,7 +45,9 @@ interface WebhookDeliveryItem {
 export default function ExternalMonitoringPage() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
+  const orgId = useActiveOrgId();
   const [adminKey, setAdminKey] = useState("");
+  const [filterOrgId, setFilterOrgId] = useState<string>(""); // Admin-only org filter
   const [webhookMetrics, setWebhookMetrics] = useState<WebhookMetrics | null>(null);
   const [keyMetrics, setKeyMetrics] = useState<ExternalKeySummary | null>(null);
   const [recentDeliveries, setRecentDeliveries] = useState<WebhookDeliveryItem[]>([]);
@@ -63,10 +66,12 @@ export default function ExternalMonitoringPage() {
   const headers = {
     "Content-Type": "application/json",
     "X-Admin-Key": adminKey,
+    ...(filterOrgId && { "X-Org-ID": filterOrgId }),
+    ...(orgId && !adminKey && { "X-Org-ID": orgId }), // Partner: auto-scope to their org
   };
 
   const fetchData = async () => {
-    if (!adminKey) return;
+    if (!adminKey && !orgId) return; // Need either admin key or org context
     setError("");
     try {
       const [webhooksRes, keysRes, deliveriesRes] = await Promise.all([
@@ -99,11 +104,11 @@ export default function ExternalMonitoringPage() {
   };
 
   useEffect(() => {
-    if (!adminKey || !autoRefresh) return;
+    if (!adminKey && !orgId || !autoRefresh) return;
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [adminKey, autoRefresh, filterStatus, filterEventType]);
+  }, [adminKey, orgId, autoRefresh, filterStatus, filterEventType, filterOrgId]);
 
   if (!isLoaded) {
     return (
@@ -175,16 +180,31 @@ export default function ExternalMonitoringPage() {
           </div>
         )}
 
-        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
-          <label className="block text-sm text-slate-300">Admin Key (X-Admin-Key)</label>
-          <input
-            type="password"
-            className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2"
-            placeholder="Enter admin key to view metrics"
-            value={adminKey}
-            onChange={(e) => setAdminKey(e.target.value)}
-          />
-          <p className="text-xs text-slate-500">Required for all monitoring data. Set ONERING_ADMIN_KEY in backend env.</p>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
+            <label className="block text-sm text-slate-300">Admin Key (X-Admin-Key)</label>
+            <input
+              type="password"
+              className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2"
+              placeholder="Enter admin key to view metrics"
+              value={adminKey}
+              onChange={(e) => setAdminKey(e.target.value)}
+            />
+            <p className="text-xs text-slate-500">Required for all monitoring data. Set ONERING_ADMIN_KEY in backend env.</p>
+          </div>
+          {adminKey && (
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
+              <label className="block text-sm text-slate-300">Filter by Organization (Optional)</label>
+              <input
+                type="text"
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2"
+                placeholder="Org ID (e.g., org_xyz123)"
+                value={filterOrgId}
+                onChange={(e) => setFilterOrgId(e.target.value)}
+              />
+              <p className="text-xs text-slate-500">Leave empty to see all orgs. Admin-only feature.</p>
+            </div>
+          )}
         </div>
 
         {/* Curl Command Examples */}

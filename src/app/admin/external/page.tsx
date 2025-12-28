@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { OrgBadge } from "@/components/OrgBadge";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 const scopes = ["read:rings", "read:drafts", "read:ledger", "read:enforcement"];
@@ -9,6 +10,7 @@ const tiers = ["free", "pro", "enterprise"];
 
 export default function AdminExternalPage() {
   const [adminKey, setAdminKey] = useState("");
+  const [filterOrgId, setFilterOrgId] = useState<string>(""); // Admin can filter by org
   const [ownerUserId, setOwnerUserId] = useState("");
   const [selectedScopes, setSelectedScopes] = useState<string[]>(["read:rings"]);
   const [tier, setTier] = useState("free");
@@ -31,6 +33,7 @@ export default function AdminExternalPage() {
   const headers = {
     "Content-Type": "application/json",
     "X-Admin-Key": adminKey,
+    ...(filterOrgId && { "X-Org-ID": filterOrgId }),
   } as Record<string, string>;
 
   const handleScopeToggle = (value: string) => {
@@ -143,7 +146,7 @@ export default function AdminExternalPage() {
       <div className="max-w-5xl mx-auto space-y-8">
         <header className="space-y-2">
           <h1 className="text-4xl font-black">External Platform Admin</h1>
-          <p className="text-slate-400">Manage API keys and webhook subscriptions. Secrets are shown only once.</p>
+          <p className="text-slate-400">Superuser console. Manage all orgs, keys, and webhooks.</p>
         </header>
 
         <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -155,6 +158,16 @@ export default function AdminExternalPage() {
             onChange={(e) => setAdminKey(e.target.value)}
           />
           <p className="text-xs text-slate-500">Required for all actions.</p>
+
+          <label className="block text-sm text-slate-300 mt-4">Filter by Org ID (optional)</label>
+          <input
+            className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2"
+            placeholder="org_xyz123 (leave blank for all orgs)"
+            value={filterOrgId}
+            onChange={(e) => setFilterOrgId(e.target.value)}
+          />
+          <p className="text-xs text-slate-500">Admin-only: scope operations to a specific organization</p>
+        </div>
         </div>
 
         {/* API Key Management */}
